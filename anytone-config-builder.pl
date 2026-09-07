@@ -53,6 +53,7 @@ use constant {
 my $global_sort_mode = "alpha";
 my $global_hotspot_tx_permit = "same-color-code";
 my $global_nickname_mode = "off";
+my $global_multi_zone = 0; # default: off
 
 my $global_line_number = 0;
 my $global_file_name   = 'none';
@@ -660,35 +661,61 @@ sub add_channel
     } 
 }
 
-
 sub build_zone_config
 {
-    my ($chan_config, $zone_name, $zone_order_index) = @_;
+    my ($chan_config, $zone_string, $zone_order_index) = @_;
 
     my $chan_name = $chan_config->{+CHAN_NAME};
     my $rx_freq   = $chan_config->{+CHAN_RX_FREQ};
     my $tx_freq   = $chan_config->{+CHAN_TX_FREQ};
-    
-    $zone_order{$zone_name} = $zone_order_index;
+    my $order     = channel_order_name($chan_config);
 
-    my $order = channel_order_name($chan_config);
-    push @{$zone_config{$zone_name}}, join("\t", $order, $chan_name, $rx_freq, $tx_freq);
+    my @zone_names;
+    if ($global_multi_zone)
+    {
+        @zone_names = split(/\|/, $zone_string);
+        # trim each
+        @zone_names = map { s/^\s+|\s+$//g; $_ } @zone_names;
+        @zone_names = grep { $_ ne '' } @zone_names;
+    }
+    else
+    {
+        @zone_names = ($zone_string);
+    }
+
+    foreach my $zone_name (@zone_names)
+    {
+        $zone_order{$zone_name} = $zone_order_index;
+        push @{$zone_config{$zone_name}}, join("\t", $order, $chan_name, $rx_freq, $tx_freq);
+    }
 }
-
 
 sub build_scanlist_config
 {
-    my ($chan_config, $scanlist_name) = @_;
+    my ($chan_config, $scanlist_string) = @_;
 
     my $chan_name = $chan_config->{+CHAN_NAME};
     my $rx_freq   = $chan_config->{+CHAN_RX_FREQ};
     my $tx_freq   = $chan_config->{+CHAN_TX_FREQ};
+    my $order     = channel_order_name($chan_config);
 
-    my $order = channel_order_name($chan_config);
-    push @{$scanlist_config{$scanlist_name}}, join("\t", $order, $chan_name, $rx_freq, $tx_freq);
+    my @scanlist_names;
+    if ($global_multi_zone)
+    {
+        @scanlist_names = split(/\|/, $scanlist_string);
+        @scanlist_names = map { s/^\s+|\s+$//g; $_ } @scanlist_names;
+        @scanlist_names = grep { $_ ne '' } @scanlist_names;
+    }
+    else
+    {
+        @scanlist_names = ($scanlist_string);
+    }
+
+    foreach my $scan_name (@scanlist_names)
+    {
+        push @{$scanlist_config{$scan_name}}, join("\t", $order, $chan_name, $rx_freq, $tx_freq);
+    }
 }
-
-
 
 sub build_talkgroup_config
 {
@@ -975,9 +1002,24 @@ sub validate_tx_prohibit
 
 sub validate_zone
 {
-	my ($zone) = @_;
+    my ($zone_string) = @_;
 
-	return _validate_string_length('Zone', $zone, 16);
+    if ($global_multi_zone)
+    {
+        my @multiple_zones = split(/\|/, $zone_string);
+        foreach my $single_zone (@multiple_zones)
+        {
+            $single_zone =~ s/^\s+|\s+$//g;
+            next if $single_zone eq '';
+            _validate_string_length('Zone', $single_zone, 16);
+        }
+        return $zone_string;
+    }
+    else
+    {
+        # Original: treat the whole string as one zone name
+        return _validate_string_length('Zone', $zone_string, 16);
+    }
 }
 
 sub validate_sort_mode
@@ -1086,7 +1128,8 @@ sub handle_command_line_args
                "output-directory=s"       => \$output_directory,
                "sorting:s"                => \$global_sort_mode,
                "nicknames:s"              => \$global_nickname_mode,
-               "hotspot-tx-permit:s"      => \$global_hotspot_tx_permit,)
+			   "hotspot-tx-permit:s"      => \$global_hotspot_tx_permit,
+			   "multi-zone!"              => \$global_multi_zone)
         or usage();
 
     validate_sort_mode($global_sort_mode);
@@ -1127,6 +1170,7 @@ sub usage
     print "  [--sorting=(alpha|repeaters-first|analog-first)]\n";
     print "  [--hotspot-tx-permit=(always|same-color-code)]\n";
     print "  [--nicknames=(off|prefix|suffix)]\n";
+	print "  [--multi-zone]             enable multiple zones/scanlists via '|' separator\n";
     exit -1;
 }
 
