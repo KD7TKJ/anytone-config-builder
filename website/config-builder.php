@@ -13,6 +13,12 @@ print_html_start();
 $sort_order = validateSortOrder($_POST["sort"]);
 $nickname_mode = validateNicknameMode($_POST["nicknames"]);
 $hotspot_tx_permit = validateHotSpotTXPermit($_POST["hotspot"]);
+
+// NEW: Read and validate the new options
+$multi_zone = isset($_POST["multi_zone"]) && $_POST["multi_zone"] == "1";
+$zone_channel_sort = validateChannelSortMode($_POST["zone_channel_sort"]);
+$scanlist_channel_sort = validateChannelSortMode($_POST["scanlist_channel_sort"]);
+
 $analog  = fileValidation("Analog",            $_FILES["analog"]);
 $dmr_oth = fileValidation("Digital-Others",    $_FILES["digitalothers"]);
 $dmr_rep = fileValidation("Digital-Repeaters", $_FILES["digitalrepeaters"]);
@@ -21,10 +27,28 @@ $talkgrp = fileValidation("TalkGroups",        $_FILES["talkgroups"]);
 $outdir = tempdir("dmr-output-");
 
 
-exec("./anytone-config-builder.pl --analog-csv='$analog' "
+// Build the command with all options
+$cmd = "./anytone-config-builder.pl --analog-csv='$analog' "
      . "--digital-others-csv='$dmr_oth' --digital-repeaters-csv='$dmr_rep' --talkgroups-csv='$talkgrp' "
      . "--output-directory='$outdir' --sorting=$sort_order --hotspot-tx-permit=$hotspot_tx_permit "
-     . "--nicknames=$nickname_mode 2>&1", 
+     . "--nicknames=$nickname_mode";
+
+// NEW: Add multi-zone flag if enabled
+if ($multi_zone) {
+    $cmd .= " --multi-zone";
+}
+
+// NEW: Add zone channel sort if not default
+if ($zone_channel_sort != "processed") {
+    $cmd .= " --zone-channel-sort=$zone_channel_sort";
+}
+
+// NEW: Add scanlist channel sort if not default
+if ($scanlist_channel_sort != "processed") {
+    $cmd .= " --scanlist-channel-sort=$scanlist_channel_sort";
+}
+
+exec($cmd . 2>&1", 
      $output, $return);
 
 
@@ -112,6 +136,20 @@ function validateNicknameMode($nickname)
     else
     {
         return "off";
+    }
+}
+
+// NEW: Validation function for channel sort modes
+function validateChannelSortMode($mode)
+{
+    $valid_modes = array("processed", "alpha", "id", "freq-asc", "freq-desc");
+    if (in_array($mode, $valid_modes))
+    {
+        return $mode;
+    }
+    else
+    {
+        return "processed";  // default
     }
 }
 
