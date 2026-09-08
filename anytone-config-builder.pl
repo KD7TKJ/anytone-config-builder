@@ -57,6 +57,13 @@ my $global_multi_zone = 0; # default: off
 my $global_zone_channel_sort = "processed";    # processed, alpha, id, freq-asc, freq-desc
 my $global_scanlist_channel_sort = "processed"; # processed, alpha, id, freq-asc, freq-desc
 
+my $global_start_zone1 = "";
+my $global_start_zone2 = "";
+my $global_start_channel1 = "";
+my $global_start_channel2 = "";
+my %channel_id_by_name;  # map channel name -> channel number
+my %zone_id_by_name;     # map zone name -> zone number
+
 my $global_line_number = 0;
 my $global_file_name   = 'none';
 my $global_channel_number = 1; 
@@ -101,6 +108,12 @@ sub main
     write_scanlist_file("$output_directory/scanlists.csv");
     write_talkgroup_file("$output_directory/talkgroups.csv");
 
+	# Validate startup options (zones/channels must exist)
+	validate_startup_options();
+	
+	# Write optional settings stub (if specified)
+	write_optional_settings_file("$output_directory/OptionalSetting_STUB.csv");
+
 }
 
 
@@ -124,8 +137,25 @@ sub write_zone_file
                      "A Channel",                  "A Channel RX Frequency",           "A Channel TX Frequency",
                      "B Channel",                  "B Channel RX Frequency",           "B Channel TX Frequency");
 
-    generate_csv_file($filename, \@headers, \%zone_config, \&zone_row_builder, \&zone_sort);
+    # Use a custom version of generate_csv_file that captures zone IDs
+    open(my $fh, ">$filename") or error("Couldn't open file '$filename': $!\n");
 
+    $csv_out->print($fh, \@headers);
+
+    my $row_num = 1;
+    foreach my $key (sort zone_sort keys %zone_config)
+    {
+        $zone_id_by_name{$key} = $row_num;  # Capture zone ID
+
+        my $value = $zone_config{$key};
+        my $row = zone_row_builder($row_num, $key, $value);
+
+        $csv_out->print($fh, $row);
+
+        $row_num++;
+    }
+
+    close($fh) or error("Couldn't close file '$filename': $!\n");
 }
 
 sub write_scanlist_file
@@ -153,6 +183,35 @@ sub write_talkgroup_file
     generate_csv_file($filename, \@headers, \%talkgroup_config, \&talkgroup_row_builder, \&case_insensitive_sort);
 }
 
+sub write_optional_settings_file
+{
+    my ($filename) = @_;
+
+    # Skip if no startup options were specified
+    if (!defined($global_start_zone1) || length($global_start_zone1) == 0) {
+        return;
+    }
+
+    my @headers = ("StartChUse", "StartZone1", "StartZone2", "StartCurChan1", "StartCurChan2");
+
+    open(my $fh, ">$filename") or error("Couldn't open file '$filename': $!\n");
+
+    $csv_out->print($fh, \@headers);
+
+    # StartChUse: 1 = use first receiver only, 2 = use both receivers
+    # Default to 2 (both receivers)
+    my $start_ch_use = 2;
+
+    my $zone1_id = $zone_id_by_name{$global_start_zone1};
+    my $zone2_id = $zone_id_by_name{$global_start_zone2};
+    my $chan1_id = $channel_id_by_name{$global_start_channel1};
+    my $chan2_id = $channel_id_by_name{$global_start_channel2};
+
+    my @values = ($start_ch_use, $zone1_id, $zone2_id, $chan1_id, $chan2_id);
+    $csv_out->print($fh, \@values);
+
+    close($fh) or error("Couldn't close file '$filename': $!\n");
+}
 
 sub zone_row_builder
 {
@@ -659,9 +718,10 @@ sub add_channel
             $value = $chan_config->{$index};
         }
         if ($index == CHAN_NUM)
-        {
-            $value = $global_channel_number++;
-        }
+		{
+			$value = $global_channel_number++;
+			$channel_id_by_name{$chan_config->{+CHAN_NAME}} = $value;
+		}
 
         $chan_config->{$index} = $value;
 
@@ -996,6 +1056,56 @@ sub validate_power
     return _validate_membership($power, \%valid_power_levels, "Power Level");
 }
 
+sub validate_startup_options
+{
+    # If no startup options are set, skip validation
+    return 1 if (!defined($global_start_zone1) || length($global_start_zone1) == 0);
+
+    # Check if zones exist
+    if (!exists $zone_id_by_name{$global_start_zone1}) {
+        error("Startup zone 1 '$global_start_zone1' does not exist in the output zones.\n");
+    }
+    if (!exists $zone_id_by_name{$global_start_zone2}) {
+        error("Startup zone 2 '$global_start_zone2' does not exist in the output zones.\n");
+    }
+
+    # Check if channels exist
+    if (!exists $channel_id_by_name{$global_start_channel1}) {
+        error("Startup channel 1 '$global_start_channel1' does not exist in the output channels.\n");
+    }
+    if (!exists $channel_id_by_name{$global_start_channel2}) {
+        error("Startup channel 2 '$global_start_channel2' does not exist in the output channels.\n");
+    }
+
+    # Check if channel 1 is in zone 1
+    my $zone1_ok = 0;
+    foreach my $entry (@{$zone_config{$global_start_zone1}}) {
+        my ($order, $chan_name, $rx_freq, $tx_freq) = split("\t", $entry);
+        if ($chan_name eq $global_start_channel1) {
+            $zone1_ok = 1;
+            last;
+        }
+    }
+    if (!$zone1_ok) {
+        error("Startup channel 1 '$global_start_channel1' is not in startup zone 1 '$global_start_zone1'.\n");
+    }
+
+    # Check if channel 2 is in zone 2
+    my $zone2_ok = 0;
+    foreach my $entry (@{$zone_config{$global_start_zone2}}) {
+        my ($order, $chan_name, $rx_freq, $tx_freq) = split("\t", $entry);
+        if ($chan_name eq $global_start_channel2) {
+            $zone2_ok = 1;
+            last;
+        }
+    }
+    if (!$zone2_ok) {
+        error("Startup channel 2 '$global_start_channel2' is not in startup zone 2 '$global_start_zone2'.\n");
+    }
+
+    return 1;
+}
+
 sub validate_timeslot
 {
     my ($timeslot) = @_;
@@ -1185,7 +1295,11 @@ sub handle_command_line_args
 			   "hotspot-tx-permit:s"      => \$global_hotspot_tx_permit,
 			   "multi-zone!"              => \$global_multi_zone,
 			   "zone-channel-sort:s"      => \$global_zone_channel_sort,
-			   "scanlist-channel-sort:s"  => \$global_scanlist_channel_sort)
+			   "scanlist-channel-sort:s"  => \$global_scanlist_channel_sort,
+			   "start-zone1=s"      => \$global_start_zone1,
+			   "start-zone2=s"      => \$global_start_zone2,
+			   "start-channel1=s"   => \$global_start_channel1,
+			   "start-channel2=s"   => \$global_start_channel2)
         or usage();
 
     validate_sort_mode($global_sort_mode);
@@ -1198,6 +1312,18 @@ sub handle_command_line_args
     validate_nickname_mode($global_nickname_mode);
 	validate_channel_sort_mode($global_zone_channel_sort);
 	validate_channel_sort_mode($global_scanlist_channel_sort);
+
+	# Validate startup options - all or nothing
+	my $num_start_opts = 0;
+	$num_start_opts++ if (defined($global_start_zone1) && length($global_start_zone1) > 0);
+	$num_start_opts++ if (defined($global_start_zone2) && length($global_start_zone2) > 0);
+	$num_start_opts++ if (defined($global_start_channel1) && length($global_start_channel1) > 0);
+	$num_start_opts++ if (defined($global_start_channel2) && length($global_start_channel2) > 0);
+	
+	if ($num_start_opts > 0 && $num_start_opts < 4) {
+		error("If any --start-* option is specified, all four must be provided:\n"
+        	. "  --start-zone1, --start-zone2, --start-channel1, --start-channel2\n");
+	}
 
     if (!defined($analog_filename) || !defined($digital_others_filename) || !defined($digital_repeaters_filename)
         || !defined($talkgroups_filename) || !defined($output_directory))
@@ -1231,6 +1357,8 @@ sub usage
 	print "  [--multi-zone]             enable multiple zones/scanlists via '|' separator\n";
 	print "  [--zone-channel-sort=(processed|alpha|id|freq-asc|freq-desc)]\n";
 	print "  [--scanlist-channel-sort=(processed|alpha|id|freq-asc|freq-desc)]\n";
+	print "  [--start-zone1=<zone> --start-zone2=<zone> --start-channel1=<chan> --start-channel2=<chan>]\n";
+	print "        All four required together. Sets startup zones/channels.\n";
     exit -1;
 }
 
