@@ -54,6 +54,8 @@ my $global_sort_mode = "alpha";
 my $global_hotspot_tx_permit = "same-color-code";
 my $global_nickname_mode = "off";
 my $global_multi_zone = 0; # default: off
+my $global_zone_channel_sort = "processed";    # processed, alpha, id, freq-asc, freq-desc
+my $global_scanlist_channel_sort = "processed"; # processed, alpha, id, freq-asc, freq-desc
 
 my $global_line_number = 0;
 my $global_file_name   = 'none';
@@ -193,7 +195,6 @@ sub generic_row_builder
     my ($row_number, $row_name, $row_record, $row_func, $row_limit, $warning_name) = @_;
 
     my @values;
-
     push @values, $row_number;
     push @values, $row_name;
 
@@ -201,10 +202,31 @@ sub generic_row_builder
     my @rx_freqs;
     my @tx_freqs;
     my $i = 0;
-    foreach my $row_details (sort case_insensitive_sort @{$row_record})
+
+    # Determine which sort mode to use based on $warning_name
+    my $sort_mode;
+    if ($warning_name eq "Zone") {
+        $sort_mode = $global_zone_channel_sort;
+    } elsif ($warning_name eq "Scanlist") {
+        $sort_mode = $global_scanlist_channel_sort;
+    } else {
+        $sort_mode = "alpha";  # fallback
+    }
+
+    # Build a sort key for each entry
+    my @sorted_details;
+	if ($sort_mode eq "processed") {
+		@sorted_details = @{$row_record};  # keep original order
+	} else {
+    	@sorted_details = sort {
+        	compare_channel_entries($a, $b, $sort_mode)
+    	} @{$row_record};
+	}
+
+    foreach my $row_details (@sorted_details)
     {
         my ($order, $chan_name, $rx_freq, $tx_freq) = split("\t", $row_details);
-        $chan_name =~ s/\s+$//;   #TODO: This sort of trimming should live WAAAAY higher elsewhere
+        $chan_name =~ s/\s+$//;
 
         if ($row_limit > 0 && $i >= $row_limit)
         {
@@ -225,7 +247,6 @@ sub generic_row_builder
     $row_func->(\@values, $channels[0], $rx_freqs[0], $tx_freqs[0]);
     return \@values;
 }
-
 
 sub zone_row_details
 {
@@ -1049,6 +1070,39 @@ sub validate_nickname_mode
     return _validate_membership($nickname_mode, \%valid_modes, "Nickname Mode");
 }
 
+sub validate_channel_sort_mode
+{
+    my ($mode) = @_;
+    my %valid_modes = ("processed" => 1, "alpha" => 1, "id" => 1, 
+                       "freq-asc" => 1, "freq-desc" => 1);
+    return _validate_membership($mode, \%valid_modes, "Channel Sort Mode");
+}
+
+sub compare_channel_entries
+{
+    my ($a, $b, $sort_mode) = @_;
+
+    my ($a_order, $a_name, $a_rx, $a_tx) = split("\t", $a);
+    my ($b_order, $b_name, $b_rx, $b_tx) = split("\t", $b);
+
+    if ($sort_mode eq "alpha") {
+        return lc($a_name) cmp lc($b_name);
+    }
+    elsif ($sort_mode eq "id") {
+        # The order prefix is already stored; compare it numerically
+        return $a_order cmp $b_order;
+    }
+    elsif ($sort_mode eq "freq-asc") {
+        return $a_rx <=> $b_rx;
+    }
+    elsif ($sort_mode eq "freq-desc") {
+        return $b_rx <=> $a_rx;
+    }
+    else { # "processed" – keep original order
+        return 0;  # presort will preserve input order
+    }
+}
+
 ####
 # Validation Helpers
 ####
@@ -1129,7 +1183,9 @@ sub handle_command_line_args
                "sorting:s"                => \$global_sort_mode,
                "nicknames:s"              => \$global_nickname_mode,
 			   "hotspot-tx-permit:s"      => \$global_hotspot_tx_permit,
-			   "multi-zone!"              => \$global_multi_zone)
+			   "multi-zone!"              => \$global_multi_zone,
+			   "zone-channel-sort:s"      => \$global_zone_channel_sort,
+			   "scanlist-channel-sort:s"  => \$global_scanlist_channel_sort)
         or usage();
 
     validate_sort_mode($global_sort_mode);
@@ -1140,6 +1196,8 @@ sub handle_command_line_args
 
     validate_hotspot_mode($global_hotspot_tx_permit);
     validate_nickname_mode($global_nickname_mode);
+	validate_channel_sort_mode($global_zone_channel_sort);
+	validate_channel_sort_mode($global_scanlist_channel_sort);
 
     if (!defined($analog_filename) || !defined($digital_others_filename) || !defined($digital_repeaters_filename)
         || !defined($talkgroups_filename) || !defined($output_directory))
@@ -1171,6 +1229,8 @@ sub usage
     print "  [--hotspot-tx-permit=(always|same-color-code)]\n";
     print "  [--nicknames=(off|prefix|suffix)]\n";
 	print "  [--multi-zone]             enable multiple zones/scanlists via '|' separator\n";
+	print "  [--zone-channel-sort=(processed|alpha|id|freq-asc|freq-desc)]\n";
+	print "  [--scanlist-channel-sort=(processed|alpha|id|freq-asc|freq-desc)]\n";
     exit -1;
 }
 
