@@ -53,6 +53,26 @@ Digital Repeater Nicknames: <select name="nicknames">
     <option value="prefix-forced">Prefix (forced)</option>
     <option value="suffix-forced">Suffix (forced)</option>
 </select>
+<br/>
+<!-- NEW: Multi-zone support -->
+<input type="checkbox" name="multi_zone" value="1"> Enable multiple zones/scanlists via '|' separator<br/>
+<!-- NEW: Zone channel sorting -->
+Zone Channel Sort Order: <select name="zone_channel_sort">
+    <option value="processed" selected="selected">Processed Order (default)</option>
+    <option value="alpha">Alphabetical by Name</option>
+    <option value="id">By Talkgroup ID</option>
+    <option value="freq-asc">By Frequency (Ascending)</option>
+    <option value="freq-desc">By Frequency (Descending)</option>
+</select>
+<br/>
+<!-- NEW: Scanlist channel sorting -->
+Scanlist Channel Sort Order: <select name="scanlist_channel_sort">
+    <option value="processed" selected="selected">Processed Order (default)</option>
+    <option value="alpha">Alphabetical by Name</option>
+    <option value="id">By Talkgroup ID</option>
+    <option value="freq-asc">By Frequency (Ascending)</option>
+    <option value="freq-desc">By Frequency (Descending)</option>
+</select>
 
 <br>
 <br>
