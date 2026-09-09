@@ -20,11 +20,22 @@ $zone_channel_sort = validateChannelSortMode($_POST["zone_channel_sort"]);
 $scanlist_channel_sort = validateChannelSortMode($_POST["scanlist_channel_sort"]);
 
 // Startup options
-$start_enable = isset($_POST["start_enable"]) && $_POST["start_enable"] == "1";
 $start_zone1 = $_POST["start_zone1"] ?? "";
 $start_zone2 = $_POST["start_zone2"] ?? "";
 $start_channel1 = $_POST["start_channel1"] ?? "";
 $start_channel2 = $_POST["start_channel2"] ?? "";
+
+// Only add if all four are provided
+$start_provided = !empty($start_zone1) && !empty($start_zone2) && !empty($start_channel1) && !empty($start_channel2);
+if ($start_provided) {
+    $cmd .= " --start-zone1=" . escapeshellarg($start_zone1);
+    $cmd .= " --start-zone2=" . escapeshellarg($start_zone2);
+    $cmd .= " --start-channel1=" . escapeshellarg($start_channel1);
+    $cmd .= " --start-channel2=" . escapeshellarg($start_channel2);
+} elseif (!empty($start_zone1) || !empty($start_zone2) || !empty($start_channel1) || !empty($start_channel2)) {
+    print_html_div("WARNING", "#FFFFBB", 
+        "All four startup options are required together. They have been ignored.");
+}
 
 $analog  = fileValidation("Analog",            $_FILES["analog"]);
 $dmr_oth = fileValidation("Digital-Others",    $_FILES["digitalothers"]);
