@@ -63,7 +63,6 @@ my $global_start_zone2 = "";
 my $global_start_channel1 = "";
 my $global_start_channel2 = "";
 my %zone_id_by_name;          # map zone name -> zone number
-
 my $global_optional_settings_filename = "";
 
 my $global_line_number = 0;
@@ -110,32 +109,30 @@ sub main
     write_scanlist_file("$output_directory/scanlists.csv");
     write_talkgroup_file("$output_directory/talkgroups.csv");
 
+    # Validate startup options (zones/channels must exist)
+    validate_startup_options();
+
     # Handle Optional Settings
     my $num_start_opts = count_startup_options();
 
-    if (length($global_optional_settings_filename) > 0) {
-        if ($num_start_opts == 4) {
-            # Read template, override, write
+    if ($num_start_opts == 4) {
+        # Always write the stub
+        write_optional_settings_stub("$output_directory/OptionalSettings_STUB.csv");
+        print "INFO: Optional Settings stub generated.\n";
+
+        # If a template was provided, also write the full override
+        if (length($global_optional_settings_filename) > 0) {
             my ($headers_ref, $values_ref) = read_optional_settings_template($global_optional_settings_filename);
-            write_optional_settings_file_full("$output_directory/OptionalSetting_FULL.csv", $headers_ref, $values_ref);
-            print "INFO: Optional Settings generated with startup options.\n";
-        } else {
+            write_optional_settings_full("$output_directory/OptionalSettings_Full.csv", $headers_ref, $values_ref);
+            print "INFO: Optional Settings full override generated from template.\n";
+        }
+    } else {
+        if (length($global_optional_settings_filename) > 0) {
             warning("Optional Settings template provided but startup options are missing (all four --start-* options required). Skipping.");
         }
-    } elsif ($num_start_opts == 4) {
-        warning("Startup options provided but no Optional Settings template. Skipping.");
     }
 }
 
-sub count_startup_options
-{
-    my $count = 0;
-    $count++ if (defined($global_start_zone1) && length($global_start_zone1) > 0);
-    $count++ if (defined($global_start_zone2) && length($global_start_zone2) > 0);
-    $count++ if (defined($global_start_channel1) && length($global_start_channel1) > 0);
-    $count++ if (defined($global_start_channel2) && length($global_start_channel2) > 0);
-    return $count;
-}
 
 ################################################################################
 ################################################################################
@@ -965,6 +962,15 @@ sub make_channel_name
         
 }
 
+
+################################################################################
+################################################################################
+################################################################################
+##########   STARTUP OPTIONS
+################################################################################
+################################################################################
+################################################################################
+
 sub read_optional_settings_template
 {
     my ($filename) = @_;
@@ -995,55 +1001,15 @@ sub read_optional_settings_template
     return (\@headers, \@values);
 }
 
-sub write_optional_settings_file_full
+sub count_startup_options
 {
-    my ($filename, $headers_ref, $values_ref) = @_;
-
-    # Find the indices of the columns we care about
-    my %col_index;
-    for (my $i = 0; $i < scalar(@{$headers_ref}); $i++) {
-        $col_index{$headers_ref->[$i]} = $i;
-    }
-
-    # Check that all required columns exist
-    my @required_cols = ("StartChUse", "StartZone1", "StartZone2", "StartCurChan1", "StartCurChan2");
-    foreach my $col (@required_cols) {
-        if (!exists $col_index{$col}) {
-            error("Required column '$col' not found in Optional Settings template.\n");
-        }
-    }
-
-    # Make a copy of the values to modify
-    my @new_values = @{$values_ref};
-
-    # Override with our values
-    $new_values[$col_index{"StartChUse"}] = 1;  # On
-
-    # Zones: 0-based
-    $new_values[$col_index{"StartZone1"}] = $zone_id_by_name{$global_start_zone1} - 1;
-    $new_values[$col_index{"StartZone2"}] = $zone_id_by_name{$global_start_zone2} - 1;
-
-    # Channels: 1-based (position within zone)
-    $new_values[$col_index{"StartCurChan1"}] = find_channel_position($global_start_zone1, $global_start_channel1);
-    $new_values[$col_index{"StartCurChan2"}] = find_channel_position($global_start_zone2, $global_start_channel2);
-
-    # Write the modified file
-    open(my $fh, ">$filename") or error("Couldn't open file '$filename': $!\n");
-
-    $csv_out->print($fh, $headers_ref);
-    $csv_out->print($fh, \@new_values);
-
-    close($fh) or error("Couldn't close file '$filename': $!\n");
+    my $count = 0;
+    $count++ if (defined($global_start_zone1) && length($global_start_zone1) > 0);
+    $count++ if (defined($global_start_zone2) && length($global_start_zone2) > 0);
+    $count++ if (defined($global_start_channel1) && length($global_start_channel1) > 0);
+    $count++ if (defined($global_start_channel2) && length($global_start_channel2) > 0);
+    return $count;
 }
-
-
-################################################################################
-################################################################################
-################################################################################
-##########   STARTUP OPTIONS
-################################################################################
-################################################################################
-################################################################################
 
 sub find_channel_position
 {
@@ -1092,18 +1058,9 @@ sub validate_startup_options
     return 1;
 }
 
-sub write_optional_settings_file
+sub write_optional_settings_stub
 {
     my ($filename) = @_;
-
-    # Skip if not all four startup options are specified
-    my $num_start_opts = 0;
-    $num_start_opts++ if (defined($global_start_zone1) && length($global_start_zone1) > 0);
-    $num_start_opts++ if (defined($global_start_zone2) && length($global_start_zone2) > 0);
-    $num_start_opts++ if (defined($global_start_channel1) && length($global_start_channel1) > 0);
-    $num_start_opts++ if (defined($global_start_channel2) && length($global_start_channel2) > 0);
-
-    return if ($num_start_opts < 4);
 
     my @headers = ("StartChUse", "StartZone1", "StartZone2", "StartCurChan1", "StartCurChan2");
 
@@ -1111,19 +1068,63 @@ sub write_optional_settings_file
 
     $csv_out->print($fh, \@headers);
 
-    # StartChUse: 1 = On (all four options are provided)
+    # StartChUse: 1 = On (since options are provided)
     my $start_ch_use = 1;
 
+    # Zones: 0-based
     my $zone1_id = $zone_id_by_name{$global_start_zone1} - 1;
     my $zone2_id = $zone_id_by_name{$global_start_zone2} - 1;
+
+    # Channels: 1-based (position within zone)
     my $chan1_pos = find_channel_position($global_start_zone1, $global_start_channel1);
     my $chan2_pos = find_channel_position($global_start_zone2, $global_start_channel2);
+
+    # Safety fallback (shouldn't happen if validation passed)
+    $chan1_pos = 1 unless $chan1_pos;
+    $chan2_pos = 1 unless $chan2_pos;
 
     my @values = ($start_ch_use, $zone1_id, $zone2_id, $chan1_pos, $chan2_pos);
     $csv_out->print($fh, \@values);
 
     close($fh) or error("Couldn't close file '$filename': $!\n");
 }
+
+sub write_optional_settings_full
+{
+    my ($filename, $headers_ref, $values_ref) = @_;
+
+    # Find indices of the columns we care about
+    my %col_index;
+    for (my $i = 0; $i < scalar(@{$headers_ref}); $i++) {
+        $col_index{$headers_ref->[$i]} = $i;
+    }
+
+    my @required_cols = ("StartChUse", "StartZone1", "StartZone2", "StartCurChan1", "StartCurChan2");
+    foreach my $col (@required_cols) {
+        if (!exists $col_index{$col}) {
+            error("Required column '$col' not found in Optional Settings template.\n");
+        }
+    }
+
+    my @new_values = @{$values_ref};
+
+    # Override the 5 columns
+    $new_values[$col_index{"StartChUse"}] = 1;  # On
+
+    # Zones: 0-based
+    $new_values[$col_index{"StartZone1"}] = $zone_id_by_name{$global_start_zone1} - 1;
+    $new_values[$col_index{"StartZone2"}] = $zone_id_by_name{$global_start_zone2} - 1;
+
+    # Channels: 1-based (position within zone)
+    $new_values[$col_index{"StartCurChan1"}] = find_channel_position($global_start_zone1, $global_start_channel1);
+    $new_values[$col_index{"StartCurChan2"}] = find_channel_position($global_start_zone2, $global_start_channel2);
+
+    open(my $fh, ">$filename") or error("Couldn't open file '$filename': $!\n");
+    $csv_out->print($fh, $headers_ref);
+    $csv_out->print($fh, \@new_values);
+    close($fh) or error("Couldn't close file '$filename': $!\n");
+}
+
 
 ################################################################################
 ################################################################################
@@ -1412,21 +1413,14 @@ sub handle_command_line_args
     validate_channel_sort_mode($global_zone_channel_sort);
     validate_channel_sort_mode($global_scanlist_channel_sort);
 
-    # Count how many startup options are provided
-    my $num_start_opts = 0;
-    $num_start_opts++ if (defined($global_start_zone1) && length($global_start_zone1) > 0);
-    $num_start_opts++ if (defined($global_start_zone2) && length($global_start_zone2) > 0);
-    $num_start_opts++ if (defined($global_start_channel1) && length($global_start_channel1) > 0);
-    $num_start_opts++ if (defined($global_start_channel2) && length($global_start_channel2) > 0);
+    # Validate startup options - all or nothing
+    my $num_start_opts = count_startup_options();
 
-    # All-or-nothing validation
+    # If any startup option is provided, require all four
     if ($num_start_opts > 0 && $num_start_opts < 4) {
         error("If any --start-* option is specified, all four must be provided:\n"
             . "  --start-zone1, --start-zone2, --start-channel1, --start-channel2\n");
     }
-
-    # If all four are provided, enable the feature
-    my $start_enabled = ($num_start_opts == 4);
 
     if (!defined($analog_filename) || !defined($digital_others_filename) || !defined($digital_repeaters_filename)
         || !defined($talkgroups_filename) || !defined($output_directory))
@@ -1465,7 +1459,8 @@ sub usage
     print "  [--start-channel1=<chan>]  Channel for Receiver A\n";
     print "  [--start-channel2=<chan>]  Channel for Receiver B\n";
     print "        All four required together to enable startup channels.\n";
-    print "  [--optional-settings-csv=<optional.csv>]  Template for Optional Settings (requires --start-* options)\n";
+    print "  [--optional-settings-csv=<optional.csv>]  Template for full Optional Settings override\n";
+    print "        (requires all --start-* options; generates both STUB and FULL)\n";
     exit -1;
 }
 
