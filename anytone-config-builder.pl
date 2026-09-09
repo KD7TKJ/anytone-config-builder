@@ -64,6 +64,8 @@ my $global_start_channel1 = "";
 my $global_start_channel2 = "";
 my %zone_id_by_name;          # map zone name -> zone number
 
+my $global_optional_settings_filename = "";
+
 my $global_line_number = 0;
 my $global_file_name   = 'none';
 my $global_channel_number = 1; 
@@ -108,14 +110,32 @@ sub main
     write_scanlist_file("$output_directory/scanlists.csv");
     write_talkgroup_file("$output_directory/talkgroups.csv");
 
-    # Validate startup options (zones/channels must exist)
-    validate_startup_options();
+    # Handle Optional Settings
+    my $num_start_opts = count_startup_options();
 
-    # Write optional settings stub (if specified)
-    write_optional_settings_file("$output_directory/OptionalSetting_STUB.csv");
-
+    if (length($global_optional_settings_filename) > 0) {
+        if ($num_start_opts == 4) {
+            # Read template, override, write
+            my ($headers_ref, $values_ref) = read_optional_settings_template($global_optional_settings_filename);
+            write_optional_settings_file_full("$output_directory/optional_settings.csv", $headers_ref, $values_ref);
+            print "INFO: Optional Settings generated with startup options.\n";
+        } else {
+            warning("Optional Settings template provided but startup options are missing (all four --start-* options required). Skipping.");
+        }
+    } elsif ($num_start_opts == 4) {
+        warning("Startup options provided but no Optional Settings template. Skipping.");
+    }
 }
 
+sub count_startup_options
+{
+    my $count = 0;
+    $count++ if (defined($global_start_zone1) && length($global_start_zone1) > 0);
+    $count++ if (defined($global_start_zone2) && length($global_start_zone2) > 0);
+    $count++ if (defined($global_start_channel1) && length($global_start_channel1) > 0);
+    $count++ if (defined($global_start_channel2) && length($global_start_channel2) > 0);
+    return $count;
+}
 
 ################################################################################
 ################################################################################
@@ -945,6 +965,77 @@ sub make_channel_name
         
 }
 
+sub read_optional_settings_template
+{
+    my ($filename) = @_;
+
+    my @headers;
+    my @values;
+
+    open(my $fh, '<:crlf', $filename) or error("Couldn't open file '$filename': $!\n");
+
+    # Read the header row
+    my $header_row = $csv->getline($fh);
+    if (!$header_row) {
+        error("Optional Settings file '$filename' is empty or invalid.\n");
+    }
+
+    @headers = @{$header_row};
+
+    # Read the values row (should be exactly one row of data)
+    my $value_row = $csv->getline($fh);
+    if (!$value_row) {
+        error("Optional Settings file '$filename' has no data row.\n");
+    }
+
+    @values = @{$value_row};
+
+    close($fh);
+
+    return (\@headers, \@values);
+}
+
+sub write_optional_settings_file_full
+{
+    my ($filename, $headers_ref, $values_ref) = @_;
+
+    # Find the indices of the columns we care about
+    my %col_index;
+    for (my $i = 0; $i < scalar(@{$headers_ref}); $i++) {
+        $col_index{$headers_ref->[$i]} = $i;
+    }
+
+    # Check that all required columns exist
+    my @required_cols = ("StartChUse", "StartZone1", "StartZone2", "StartCurChan1", "StartCurChan2");
+    foreach my $col (@required_cols) {
+        if (!exists $col_index{$col}) {
+            error("Required column '$col' not found in Optional Settings template.\n");
+        }
+    }
+
+    # Make a copy of the values to modify
+    my @new_values = @{$values_ref};
+
+    # Override with our values
+    $new_values[$col_index{"StartChUse"}] = 1;  # On
+
+    # Zones: 0-based
+    $new_values[$col_index{"StartZone1"}] = $zone_id_by_name{$global_start_zone1} - 1;
+    $new_values[$col_index{"StartZone2"}] = $zone_id_by_name{$global_start_zone2} - 1;
+
+    # Channels: 1-based (position within zone)
+    $new_values[$col_index{"StartCurChan1"}] = find_channel_position($global_start_zone1, $global_start_channel1);
+    $new_values[$col_index{"StartCurChan2"}] = find_channel_position($global_start_zone2, $global_start_channel2);
+
+    # Write the modified file
+    open(my $fh, ">$filename") or error("Couldn't open file '$filename': $!\n");
+
+    $csv_out->print($fh, $headers_ref);
+    $csv_out->print($fh, \@new_values);
+
+    close($fh) or error("Couldn't close file '$filename': $!\n");
+}
+
 
 ################################################################################
 ################################################################################
@@ -1303,11 +1394,11 @@ sub handle_command_line_args
                "multi-zone!"              => \$global_multi_zone,
                "zone-channel-sort:s"      => \$global_zone_channel_sort,
                "scanlist-channel-sort:s"  => \$global_scanlist_channel_sort,
-               "start-enable!"            => \$global_start_ch_use,
                "start-zone1=s"            => \$global_start_zone1,
                "start-zone2=s"            => \$global_start_zone2,
                "start-channel1=s"         => \$global_start_channel1,
                "start-channel2=s"         => \$global_start_channel2)
+               "optional-settings-csv=s"  => \$global_optional_settings_filename,
         or usage();
 
     validate_sort_mode($global_sort_mode);
@@ -1374,6 +1465,7 @@ sub usage
     print "  [--start-channel1=<chan>]  Channel for Receiver A\n";
     print "  [--start-channel2=<chan>]  Channel for Receiver B\n";
     print "        All four required together to enable startup channels.\n";
+    print "  [--optional-settings-csv=<optional.csv>]  Template for Optional Settings (requires --start-* options)\n";
     exit -1;
 }
 
