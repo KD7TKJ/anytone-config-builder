@@ -1397,8 +1397,8 @@ sub handle_command_line_args
                "start-zone1=s"            => \$global_start_zone1,
                "start-zone2=s"            => \$global_start_zone2,
                "start-channel1=s"         => \$global_start_channel1,
-               "start-channel2=s"         => \$global_start_channel2)
-               "optional-settings-csv=s"  => \$global_optional_settings_filename,
+               "start-channel2=s"         => \$global_start_channel2,
+               "optional-settings-csv=s"  => \$global_optional_settings_filename)
         or usage();
 
     validate_sort_mode($global_sort_mode);
