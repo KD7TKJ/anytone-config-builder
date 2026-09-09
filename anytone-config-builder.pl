@@ -1020,10 +1020,10 @@ sub write_optional_settings_file
     # StartChUse: 0 = Off, 1 = On
     my $start_ch_use = $global_start_ch_use ? 1 : 0;
 
-    my $zone1_id = $zone_id_by_name{$global_start_zone1};
-    my $zone2_id = $zone_id_by_name{$global_start_zone2};
-    my $chan1_pos = find_channel_position($global_start_zone1, $global_start_channel1);
-    my $chan2_pos = find_channel_position($global_start_zone2, $global_start_channel2);
+    my $zone1_id = $zone_id_by_name{$global_start_zone1} - 1;
+    my $zone2_id = $zone_id_by_name{$global_start_zone2} - 1;
+    my $chan1_pos = find_channel_position($global_start_zone1, $global_start_channel1) - 1;
+    my $chan2_pos = find_channel_position($global_start_zone2, $global_start_channel2) - 1;
 
     # Fallback to 1 if position not found (shouldn't happen if validation passed)
     $chan1_pos = 1 unless $chan1_pos;
