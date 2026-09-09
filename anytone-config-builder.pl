@@ -1093,29 +1093,31 @@ sub write_optional_settings_full
 {
     my ($filename, $headers_ref, $values_ref) = @_;
 
-    # Find indices of the columns we care about
+    # Build index of column names
     my %col_index;
     for (my $i = 0; $i < scalar(@{$headers_ref}); $i++) {
         $col_index{$headers_ref->[$i]} = $i;
     }
 
     my @required_cols = ("StartChUse", "StartZone1", "StartZone2", "StartCurChan1", "StartCurChan2");
+    my @missing_cols;
     foreach my $col (@required_cols) {
         if (!exists $col_index{$col}) {
-            error("Required column '$col' not found in Optional Settings template.\n");
+            push @missing_cols, $col;
         }
     }
 
+    # Stop with a clear error if any required columns are missing
+    if (@missing_cols) {
+        error("Required column(s) not found in Optional Settings template: " . join(", ", @missing_cols) . "\n"
+            . "Please ensure your template matches the expected CPS export format.\n");
+    }
+
+    # Apply overrides
     my @new_values = @{$values_ref};
-
-    # Override the 5 columns
     $new_values[$col_index{"StartChUse"}] = 1;  # On
-
-    # Zones: 0-based
     $new_values[$col_index{"StartZone1"}] = $zone_id_by_name{$global_start_zone1} - 1;
     $new_values[$col_index{"StartZone2"}] = $zone_id_by_name{$global_start_zone2} - 1;
-
-    # Channels: 1-based (position within zone)
     $new_values[$col_index{"StartCurChan1"}] = find_channel_position($global_start_zone1, $global_start_channel1);
     $new_values[$col_index{"StartCurChan2"}] = find_channel_position($global_start_zone2, $global_start_channel2);
 
