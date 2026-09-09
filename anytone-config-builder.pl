@@ -57,6 +57,14 @@ my $global_multi_zone = 0; # default: off
 my $global_zone_channel_sort = "processed";    # processed, alpha, id, freq-asc, freq-desc
 my $global_scanlist_channel_sort = "processed"; # processed, alpha, id, freq-asc, freq-desc
 
+# Startup options
+my $global_start_zone1 = "";
+my $global_start_zone2 = "";
+my $global_start_channel1 = "";
+my $global_start_channel2 = "";
+my %zone_id_by_name;          # map zone name -> zone number
+my $global_optional_settings_filename = "";
+
 my $global_line_number = 0;
 my $global_file_name   = 'none';
 my $global_channel_number = 1; 
@@ -101,6 +109,28 @@ sub main
     write_scanlist_file("$output_directory/scanlists.csv");
     write_talkgroup_file("$output_directory/talkgroups.csv");
 
+    # Validate startup options (zones/channels must exist)
+    validate_startup_options();
+
+    # Handle Optional Settings
+    my $num_start_opts = count_startup_options();
+
+    if ($num_start_opts == 4) {
+        # Always write the stub
+        write_optional_settings_stub("$output_directory/OptionalSettings_STUB.csv");
+        print "INFO: Optional Settings stub generated.\n";
+
+        # If a template was provided, also write the full override
+        if (length($global_optional_settings_filename) > 0) {
+            my ($headers_ref, $values_ref) = read_optional_settings_template($global_optional_settings_filename);
+            write_optional_settings_full("$output_directory/OptionalSettings_Full.csv", $headers_ref, $values_ref);
+            print "INFO: Optional Settings full override generated from template.\n";
+        }
+    } else {
+        if (length($global_optional_settings_filename) > 0) {
+            warning("Optional Settings template provided but startup options are missing (all four --start-* options required). Skipping.");
+        }
+    }
 }
 
 
@@ -124,8 +154,25 @@ sub write_zone_file
                      "A Channel",                  "A Channel RX Frequency",           "A Channel TX Frequency",
                      "B Channel",                  "B Channel RX Frequency",           "B Channel TX Frequency");
 
-    generate_csv_file($filename, \@headers, \%zone_config, \&zone_row_builder, \&zone_sort);
+    open(my $fh, ">$filename") or error("Couldn't open file '$filename': $!\n");
 
+    $csv_out->print($fh, \@headers);
+
+    my $row_num = 1;
+    foreach my $key (sort zone_sort keys %zone_config)
+    {
+        # Capture zone ID (1-based)
+        $zone_id_by_name{$key} = $row_num;
+
+        my $value = $zone_config{$key};
+        my $row = zone_row_builder($row_num, $key, $value);
+
+        $csv_out->print($fh, $row);
+
+        $row_num++;
+    }
+
+    close($fh) or error("Couldn't close file '$filename': $!\n");
 }
 
 sub write_scanlist_file
@@ -215,13 +262,13 @@ sub generic_row_builder
 
     # Build a sort key for each entry
     my @sorted_details;
-	if ($sort_mode eq "processed") {
-		@sorted_details = @{$row_record};  # keep original order
-	} else {
-    	@sorted_details = sort {
-        	compare_channel_entries($a, $b, $sort_mode)
-    	} @{$row_record};
-	}
+    if ($sort_mode eq "processed") {
+        @sorted_details = @{$row_record};  # keep original order
+    } else {
+        @sorted_details = sort {
+            compare_channel_entries($a, $b, $sort_mode)
+        } @{$row_record};
+    }
 
     foreach my $row_details (@sorted_details)
     {
@@ -571,22 +618,22 @@ sub process_csv_file_with_header
     my $zone_order_index = 1;
     open(my $fh,  '<:crlf', $filename) or error("Couldn't open file '$filename': $!\n");
     for(my $line_no = 0; my $row = $csv->getline($fh); $line_no++)	
-	{
+    {
         $global_line_number = $line_no;
-		# Make sure the header looks sane... it's an easy check, but it'll catch obvious mistakes
-		if ($line_no == 0)
-		{
+        # Make sure the header looks sane... it's an easy check, but it'll catch obvious mistakes
+        if ($line_no == 0)
+        {
             # iterate through the headers that were provided in the arguments and make sure they match
             # what's in the file.
-			for(my $col = 0; $col < scalar(@{$header_ref}); $col++)
-			{
-				if ($row->[$col] ne $header_ref->[$col])
-				{
-					error("CSV header does not match for $file_nickname file (found '" 
+            for(my $col = 0; $col < scalar(@{$header_ref}); $col++)
+            {
+                if ($row->[$col] ne $header_ref->[$col])
+                {
+                    error("CSV header does not match for $file_nickname file (found '" 
                        . $row->[$col] ."' expected '" . $header_ref->[$col] . "')\n");
-				}
+                }
                 push @headers, $row->[$col];
-			}	
+            }   
 
 
             # If this is going to be a matrix'd CSV, those headers will follow the main headers
@@ -595,7 +642,7 @@ sub process_csv_file_with_header
                 push @headers, $row->[$col];
             }
 
-		}
+        }
         else  ## Process an actual data row...
         {
 
@@ -641,7 +688,7 @@ sub process_csv_file_with_header
             }
             $zone_order_index++;
         }
-	}
+    }
 }
 
 
@@ -916,6 +963,170 @@ sub make_channel_name
 }
 
 
+################################################################################
+################################################################################
+################################################################################
+##########   STARTUP OPTIONS
+################################################################################
+################################################################################
+################################################################################
+
+sub read_optional_settings_template
+{
+    my ($filename) = @_;
+
+    my @headers;
+    my @values;
+
+    open(my $fh, '<:crlf', $filename) or error("Couldn't open file '$filename': $!\n");
+
+    # Read the header row
+    my $header_row = $csv->getline($fh);
+    if (!$header_row) {
+        error("Optional Settings file '$filename' is empty or invalid.\n");
+    }
+
+    @headers = @{$header_row};
+
+    # Read the values row (should be exactly one row of data)
+    my $value_row = $csv->getline($fh);
+    if (!$value_row) {
+        error("Optional Settings file '$filename' has no data row.\n");
+    }
+
+    @values = @{$value_row};
+
+    close($fh);
+
+    return (\@headers, \@values);
+}
+
+sub count_startup_options
+{
+    my $count = 0;
+    $count++ if (defined($global_start_zone1) && length($global_start_zone1) > 0);
+    $count++ if (defined($global_start_zone2) && length($global_start_zone2) > 0);
+    $count++ if (defined($global_start_channel1) && length($global_start_channel1) > 0);
+    $count++ if (defined($global_start_channel2) && length($global_start_channel2) > 0);
+    return $count;
+}
+
+sub find_channel_position
+{
+    my ($zone_name, $channel_name) = @_;
+
+    # Get the list of channels for this zone
+    my $zone_record = $zone_config{$zone_name};
+    return 0 unless defined($zone_record);
+
+    my $pos = 1;
+    foreach my $entry (@{$zone_record}) {
+        my ($order, $chan_name, $rx_freq, $tx_freq) = split("\t", $entry);
+        if ($chan_name eq $channel_name) {
+            return $pos;
+        }
+        $pos++;
+    }
+
+    return 0;  # Not found
+}
+
+sub validate_startup_options
+{
+    # If no startup options are set, skip validation
+    return 1 if (!defined($global_start_zone1) || length($global_start_zone1) == 0);
+
+    # Check if zones exist
+    if (!exists $zone_id_by_name{$global_start_zone1}) {
+        error("Startup zone 1 '$global_start_zone1' does not exist in the output zones.\n");
+    }
+    if (!exists $zone_id_by_name{$global_start_zone2}) {
+        error("Startup zone 2 '$global_start_zone2' does not exist in the output zones.\n");
+    }
+
+    # Check if channels exist in their respective zones
+    my $chan1_pos = find_channel_position($global_start_zone1, $global_start_channel1);
+    if (!$chan1_pos) {
+        error("Startup channel 1 '$global_start_channel1' is not in startup zone 1 '$global_start_zone1'.\n");
+    }
+
+    my $chan2_pos = find_channel_position($global_start_zone2, $global_start_channel2);
+    if (!$chan2_pos) {
+        error("Startup channel 2 '$global_start_channel2' is not in startup zone 2 '$global_start_zone2'.\n");
+    }
+
+    return 1;
+}
+
+sub write_optional_settings_stub
+{
+    my ($filename) = @_;
+
+    my @headers = ("StartChUse", "StartZone1", "StartZone2", "StartCurChan1", "StartCurChan2");
+
+    open(my $fh, ">$filename") or error("Couldn't open file '$filename': $!\n");
+
+    $csv_out->print($fh, \@headers);
+
+    # StartChUse: 1 = On (since options are provided)
+    my $start_ch_use = 1;
+
+    # Zones: 0-based
+    my $zone1_id = $zone_id_by_name{$global_start_zone1} - 1;
+    my $zone2_id = $zone_id_by_name{$global_start_zone2} - 1;
+
+    # Channels: 1-based (position within zone)
+    my $chan1_pos = find_channel_position($global_start_zone1, $global_start_channel1);
+    my $chan2_pos = find_channel_position($global_start_zone2, $global_start_channel2);
+
+    # Safety fallback (shouldn't happen if validation passed)
+    $chan1_pos = 1 unless $chan1_pos;
+    $chan2_pos = 1 unless $chan2_pos;
+
+    my @values = ($start_ch_use, $zone1_id, $zone2_id, $chan1_pos, $chan2_pos);
+    $csv_out->print($fh, \@values);
+
+    close($fh) or error("Couldn't close file '$filename': $!\n");
+}
+
+sub write_optional_settings_full
+{
+    my ($filename, $headers_ref, $values_ref) = @_;
+
+    # Build index of column names
+    my %col_index;
+    for (my $i = 0; $i < scalar(@{$headers_ref}); $i++) {
+        $col_index{$headers_ref->[$i]} = $i;
+    }
+
+    my @required_cols = ("StartChUse", "StartZone1", "StartZone2", "StartCurChan1", "StartCurChan2");
+    my @missing_cols;
+    foreach my $col (@required_cols) {
+        if (!exists $col_index{$col}) {
+            push @missing_cols, $col;
+        }
+    }
+
+    # Stop with a clear error if any required columns are missing
+    if (@missing_cols) {
+        error("Required column(s) not found in Optional Settings template: " . join(", ", @missing_cols) . "\n"
+            . "Please ensure your template matches the expected CPS export format.\n");
+    }
+
+    # Apply overrides
+    my @new_values = @{$values_ref};
+    $new_values[$col_index{"StartChUse"}] = 1;  # On
+    $new_values[$col_index{"StartZone1"}] = $zone_id_by_name{$global_start_zone1} - 1;
+    $new_values[$col_index{"StartZone2"}] = $zone_id_by_name{$global_start_zone2} - 1;
+    $new_values[$col_index{"StartCurChan1"}] = find_channel_position($global_start_zone1, $global_start_channel1);
+    $new_values[$col_index{"StartCurChan2"}] = find_channel_position($global_start_zone2, $global_start_channel2);
+
+    open(my $fh, ">$filename") or error("Couldn't open file '$filename': $!\n");
+    $csv_out->print($fh, $headers_ref);
+    $csv_out->print($fh, \@new_values);
+    close($fh) or error("Couldn't close file '$filename': $!\n");
+}
+
 
 ################################################################################
 ################################################################################
@@ -982,9 +1193,9 @@ sub validate_freq
 
 sub validate_name
 {
-	my ($name) = @_;
+    my ($name) = @_;
 
-	return _validate_string_length('Channel Name', $name, LENGTH_CHAN_NAME);
+    return _validate_string_length('Channel Name', $name, LENGTH_CHAN_NAME);
 }
 
 sub validate_power
@@ -1145,12 +1356,12 @@ sub _validate_on_off
 
 sub _validate_string_length
 {
-	my ($type, $string, $length) = @_;
+    my ($type, $string, $length) = @_;
 
-	if(length($string) > $length)
-	{
-		error("Invalid $type: '$string' is more than $length characters" . _file_and_line());
-	}
+    if(length($string) > $length)
+    {
+        error("Invalid $type: '$string' is more than $length characters" . _file_and_line());
+    }
 
     return $string;
 }
@@ -1182,10 +1393,15 @@ sub handle_command_line_args
                "output-directory=s"       => \$output_directory,
                "sorting:s"                => \$global_sort_mode,
                "nicknames:s"              => \$global_nickname_mode,
-			   "hotspot-tx-permit:s"      => \$global_hotspot_tx_permit,
-			   "multi-zone!"              => \$global_multi_zone,
-			   "zone-channel-sort:s"      => \$global_zone_channel_sort,
-			   "scanlist-channel-sort:s"  => \$global_scanlist_channel_sort)
+               "hotspot-tx-permit:s"      => \$global_hotspot_tx_permit,
+               "multi-zone!"              => \$global_multi_zone,
+               "zone-channel-sort:s"      => \$global_zone_channel_sort,
+               "scanlist-channel-sort:s"  => \$global_scanlist_channel_sort,
+               "start-zone1=s"            => \$global_start_zone1,
+               "start-zone2=s"            => \$global_start_zone2,
+               "start-channel1=s"         => \$global_start_channel1,
+               "start-channel2=s"         => \$global_start_channel2,
+               "optional-settings-csv=s"  => \$global_optional_settings_filename)
         or usage();
 
     validate_sort_mode($global_sort_mode);
@@ -1196,8 +1412,17 @@ sub handle_command_line_args
 
     validate_hotspot_mode($global_hotspot_tx_permit);
     validate_nickname_mode($global_nickname_mode);
-	validate_channel_sort_mode($global_zone_channel_sort);
-	validate_channel_sort_mode($global_scanlist_channel_sort);
+    validate_channel_sort_mode($global_zone_channel_sort);
+    validate_channel_sort_mode($global_scanlist_channel_sort);
+
+    # Validate startup options - all or nothing
+    my $num_start_opts = count_startup_options();
+
+    # If any startup option is provided, require all four
+    if ($num_start_opts > 0 && $num_start_opts < 4) {
+        error("If any --start-* option is specified, all four must be provided:\n"
+            . "  --start-zone1, --start-zone2, --start-channel1, --start-channel2\n");
+    }
 
     if (!defined($analog_filename) || !defined($digital_others_filename) || !defined($digital_repeaters_filename)
         || !defined($talkgroups_filename) || !defined($output_directory))
@@ -1228,9 +1453,16 @@ sub usage
     print "  [--sorting=(alpha|repeaters-first|analog-first)]\n";
     print "  [--hotspot-tx-permit=(always|same-color-code)]\n";
     print "  [--nicknames=(off|prefix|suffix)]\n";
-	print "  [--multi-zone]             enable multiple zones/scanlists via '|' separator\n";
-	print "  [--zone-channel-sort=(processed|alpha|id|freq-asc|freq-desc)]\n";
-	print "  [--scanlist-channel-sort=(processed|alpha|id|freq-asc|freq-desc)]\n";
+    print "  [--multi-zone]             enable multiple zones/scanlists via '|' separator\n";
+    print "  [--zone-channel-sort=(processed|alpha|id|freq-asc|freq-desc)]\n";
+    print "  [--scanlist-channel-sort=(processed|alpha|id|freq-asc|freq-desc)]\n";
+    print "  [--start-zone1=<zone>]     Zone for Receiver A\n";
+    print "  [--start-zone2=<zone>]     Zone for Receiver B\n";
+    print "  [--start-channel1=<chan>]  Channel for Receiver A\n";
+    print "  [--start-channel2=<chan>]  Channel for Receiver B\n";
+    print "        All four required together to enable startup channels.\n";
+    print "  [--optional-settings-csv=<optional.csv>]  Template for full Optional Settings override\n";
+    print "        (requires all --start-* options; generates both STUB and FULL)\n";
     exit -1;
 }
 

@@ -34,6 +34,7 @@ Choose your files, hit upload!
 <td><input type="file" name="talkgroups" id="talkgroups"></td>
 </tr>
 </table>
+
 <b>Advanced Options:</b> [<a href="advanced-options.html">help</a>]<br>
 Zone/Talkgroup Sort Order: <select name="sort">
     <option value="alpha" selected="selected">Alphabetize them for me</option>
@@ -54,9 +55,9 @@ Digital Repeater Nicknames: <select name="nicknames">
     <option value="suffix-forced">Suffix (forced)</option>
 </select>
 <br/>
-<!-- NEW: Multi-zone support -->
+<!-- Multi-zone support -->
 <input type="checkbox" name="multi_zone" value="1"> Enable multiple zones/scanlists via '|' separator<br/>
-<!-- NEW: Zone channel sorting -->
+<!-- Zone channel sorting -->
 Zone Channel Sort Order: <select name="zone_channel_sort">
     <option value="processed" selected="selected">Processed Order (default)</option>
     <option value="alpha">Alphabetical by Name</option>
@@ -65,7 +66,7 @@ Zone Channel Sort Order: <select name="zone_channel_sort">
     <option value="freq-desc">By Frequency (Descending)</option>
 </select>
 <br/>
-<!-- NEW: Scanlist channel sorting -->
+<!-- Scanlist channel sorting -->
 Scanlist Channel Sort Order: <select name="scanlist_channel_sort">
     <option value="processed" selected="selected">Processed Order (default)</option>
     <option value="alpha">Alphabetical by Name</option>
@@ -73,11 +74,32 @@ Scanlist Channel Sort Order: <select name="scanlist_channel_sort">
     <option value="freq-asc">By Frequency (Ascending)</option>
     <option value="freq-desc">By Frequency (Descending)</option>
 </select>
-
-<br>
-<br>
+<br/>
+<br/>
+<!-- Startup Options -->
+<b>Startup Options:</b> [<a href="advanced-options.html">help</a>] <i>(all four required together)</i><br/>
+<table>
+<tr>
+  <td>Receiver A Zone:</td>
+  <td><input type="text" name="start_zone1" placeholder="Zone Name"></td>
+  <td>Receiver A Channel:</td>
+  <td><input type="text" name="start_channel1" placeholder="Channel Name"></td>
+</tr>
+<tr>
+  <td>Receiver B Zone:</td>
+  <td><input type="text" name="start_zone2" placeholder="Zone Name"></td>
+  <td>Receiver B Channel:</td>
+  <td><input type="text" name="start_channel2" placeholder="Channel Name"></td>
+</tr>
+<tr>
+  <td>Optional Settings CSV File (template)</td>
+  <td><input type="file" name="optional_settings" id="optional_settings"></td>
+</tr>
+</table>
+<br/>
 <input type="submit" value="Upload" name="Upload">
 </form>
+
 </div>
 
 <p> Not working for you?  Email me: k7abd@arrl.net.</p>

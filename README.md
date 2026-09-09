@@ -16,6 +16,8 @@ This file is a list of analog channels that you'd like in the repeater.  If you'
 
 Channel Names can be up to 16 characters.  You can group your channels into different zones which helps keep them organized.  The example input file has a few such zones: VHF repeaters, UHF repeaters, simplex, etc.
 
+> **Note:** If you enable `--multi-zone` (see Usage below), you can specify multiple zones (or scanlists) by separating them with a pipe (`|`), e.g. `"North|South"`. This will add the channel to each listed zone/scanlist.
+
 ##### Details
 - **Zone** - Up to 16 characters
 - **Channel Name** - Up to 16 characters
@@ -27,6 +29,9 @@ Channel Names can be up to 16 characters.  You can group your channels into diff
 
 ### Digital-Others.csv
 This is a similar file to the Analog file above, but these are one-off DMR channels.  In the example file, it has the DMR Simplex channels as well as some Brandmeister digital APRS stations.
+
+> **Note:** The `--multi-zone` feature applies to the "Zone" column as well – separate multiple zones with a pipe (`|`).
+
 - **Zone** - Up to 16 characters
 - **Channel Name** - Up to 16 characters
 - **Power** - "Turbo", "High", "Mid", "Low"
@@ -41,7 +46,7 @@ This is a similar file to the Analog file above, but these are one-off DMR chann
 ## Digital-Repeaters.csv
 This is kinda where a lot of the awesome happens.  Unlike the files above, this is a matrix of repeater frequencies and the talkgroups that are supported on that talkgroup.  The first 5 columns are specific to each repeater:
 
-- **Zone Name** - Up to 16 characters
+- **Zone Name** - Up to 16 characters (also supports `--multi-zone` separation with `|`)
 - **Comment** - This is just for your notes, it's totally ignored by the program
 - **Power** - "Turbo", "High", "Mid", "Low"
 - **RX/TX Freq** - the frequency, in MHz
@@ -70,6 +75,11 @@ What you'll wind up with is the following:
    - A channel for every line in the Analog and Digital-Others files
    - A channel for every repeater on each talkgroup that's configured (that matrix described above gets multiplied out).  These channels are named for the talkgroup
 
+**Optional Settings CSV**: When you provide the four `--start-*` options (see Usage), the tool generates two extra files:
+- `OptionalSettings_STUB.csv` – a minimal CSV with only the five startup columns.
+- `OptionalSettings_Full.csv` – if a template is given with `--optional-settings-csv`, this file contains all columns from the template, with the startup values overridden.
+
+These files can be imported into the CPS to set the radio’s power‑on zone and channel.
 
 # CPS Stuff
 #### Duplicate Channel Names
@@ -83,9 +93,3 @@ You're on your own for contacts.  I pulled mine in by starting with the PNWDigit
 
 
 # Usage
-    ./anytone-config-builder.pl --analog-csv=input-csv/Analog.csv --digital-others-csv=input-csv/Digital-Others.csv --digital-repeaters-csv=input-csv/Digital-Repeaters.csv --talkgroups-csv=input-csv/TalkGroups.csv --output-directory=output/
-
-It'll dump the output csv's into the output directory.  You should get fairly readable error messages if you screw something up.
-
-
-

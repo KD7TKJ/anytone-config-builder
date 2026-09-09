@@ -14,15 +14,28 @@ $sort_order = validateSortOrder($_POST["sort"]);
 $nickname_mode = validateNicknameMode($_POST["nicknames"]);
 $hotspot_tx_permit = validateHotSpotTXPermit($_POST["hotspot"]);
 
-// NEW: Read and validate the new options
+// Read and validate the new options
 $multi_zone = isset($_POST["multi_zone"]) && $_POST["multi_zone"] == "1";
 $zone_channel_sort = validateChannelSortMode($_POST["zone_channel_sort"]);
 $scanlist_channel_sort = validateChannelSortMode($_POST["scanlist_channel_sort"]);
 
+// Startup options
+$start_zone1 = $_POST["start_zone1"] ?? "";
+$start_zone2 = $_POST["start_zone2"] ?? "";
+$start_channel1 = $_POST["start_channel1"] ?? "";
+$start_channel2 = $_POST["start_channel2"] ?? "";
+
+// Validate required files
 $analog  = fileValidation("Analog",            $_FILES["analog"]);
 $dmr_oth = fileValidation("Digital-Others",    $_FILES["digitalothers"]);
 $dmr_rep = fileValidation("Digital-Repeaters", $_FILES["digitalrepeaters"]);
 $talkgrp = fileValidation("TalkGroups",        $_FILES["talkgroups"]);
+
+// Optional Settings (if provided)
+$optional_settings = "";
+if (isset($_FILES["optional_settings"]) && $_FILES["optional_settings"]["size"] > 0) {
+    $optional_settings = fileValidation("Optional Settings", $_FILES["optional_settings"]);
+}
 
 $outdir = tempdir("dmr-output-");
 
@@ -33,22 +46,40 @@ $cmd = "./anytone-config-builder.pl --analog-csv='$analog' "
      . "--output-directory='$outdir' --sorting=$sort_order --hotspot-tx-permit=$hotspot_tx_permit "
      . "--nicknames=$nickname_mode";
 
-// NEW: Add multi-zone flag if enabled
+// Add multi-zone flag if enabled
 if ($multi_zone) {
     $cmd .= " --multi-zone";
 }
 
-// NEW: Add zone channel sort if not default
+// Add zone channel sort if not default
 if ($zone_channel_sort != "processed") {
     $cmd .= " --zone-channel-sort=$zone_channel_sort";
 }
 
-// NEW: Add scanlist channel sort if not default
+// Add scanlist channel sort if not default
 if ($scanlist_channel_sort != "processed") {
     $cmd .= " --scanlist-channel-sort=$scanlist_channel_sort";
 }
 
-exec($cmd . 2>&1", 
+// Add Optional Settings template if provided
+if (!empty($optional_settings)) {
+    $cmd .= " --optional-settings-csv='$optional_settings'";
+}
+
+// Add startup options if all four are provided
+$start_provided = !empty($start_zone1) && !empty($start_zone2) && !empty($start_channel1) && !empty($start_channel2);
+if ($start_provided) {
+    $cmd .= " --start-zone1=" . escapeshellarg($start_zone1);
+    $cmd .= " --start-zone2=" . escapeshellarg($start_zone2);
+    $cmd .= " --start-channel1=" . escapeshellarg($start_channel1);
+    $cmd .= " --start-channel2=" . escapeshellarg($start_channel2);
+} elseif (!empty($start_zone1) || !empty($start_zone2) || !empty($start_channel1) || !empty($start_channel2)) {
+    // Some but not all provided
+    print_html_div("WARNING", "#FFFFBB", 
+        "All four startup options are required together. They have been ignored.");
+}
+
+exec($cmd . " 2>&1", 
      $output, $return);
 
 
@@ -61,6 +92,10 @@ foreach($output as $line)
     elseif (preg_match('/^ERROR: (.*)/', $line, $matches))
     {
         print_html_div("ERROR", "#FFDDDD", $matches[1]);
+    }
+    elseif (preg_match('/^INFO: (.*)/', $line, $matches))
+    {
+        print_html_div("INFO", "#CCDDFF", $matches[1]);
     }
 }
 
@@ -129,7 +164,7 @@ function validateHotSpotTXPermit($hotspot)
 
 function validateNicknameMode($nickname)
 {
-    if ($nickname == "prefix" || $nickname == "suffix" || $nickname == "prefix-forced" || $nickname = "suffix-forced")
+    if ($nickname == "prefix" || $nickname == "suffix" || $nickname == "prefix-forced" || $nickname == "suffix-forced")
     {
         return $nickname;
     }
@@ -139,7 +174,7 @@ function validateNicknameMode($nickname)
     }
 }
 
-// NEW: Validation function for channel sort modes
+// Validation function for channel sort modes
 function validateChannelSortMode($mode)
 {
     $valid_modes = array("processed", "alpha", "id", "freq-asc", "freq-desc");
