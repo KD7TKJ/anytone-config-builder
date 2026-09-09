@@ -25,22 +25,17 @@ $start_zone2 = $_POST["start_zone2"] ?? "";
 $start_channel1 = $_POST["start_channel1"] ?? "";
 $start_channel2 = $_POST["start_channel2"] ?? "";
 
-// Only add if all four are provided
-$start_provided = !empty($start_zone1) && !empty($start_zone2) && !empty($start_channel1) && !empty($start_channel2);
-if ($start_provided) {
-    $cmd .= " --start-zone1=" . escapeshellarg($start_zone1);
-    $cmd .= " --start-zone2=" . escapeshellarg($start_zone2);
-    $cmd .= " --start-channel1=" . escapeshellarg($start_channel1);
-    $cmd .= " --start-channel2=" . escapeshellarg($start_channel2);
-} elseif (!empty($start_zone1) || !empty($start_zone2) || !empty($start_channel1) || !empty($start_channel2)) {
-    print_html_div("WARNING", "#FFFFBB", 
-        "All four startup options are required together. They have been ignored.");
-}
-
+// Validate required files
 $analog  = fileValidation("Analog",            $_FILES["analog"]);
 $dmr_oth = fileValidation("Digital-Others",    $_FILES["digitalothers"]);
 $dmr_rep = fileValidation("Digital-Repeaters", $_FILES["digitalrepeaters"]);
 $talkgrp = fileValidation("TalkGroups",        $_FILES["talkgroups"]);
+
+// Optional Settings (if provided)
+$optional_settings = "";
+if (isset($_FILES["optional_settings"]) && $_FILES["optional_settings"]["size"] > 0) {
+    $optional_settings = fileValidation("Optional Settings", $_FILES["optional_settings"]);
+}
 
 $outdir = tempdir("dmr-output-");
 
@@ -66,18 +61,18 @@ if ($scanlist_channel_sort != "processed") {
     $cmd .= " --scanlist-channel-sort=$scanlist_channel_sort";
 }
 
-// Add startup options if enabled and all four are provided
-if ($start_enable) {
-    if (!empty($start_zone1) && !empty($start_zone2) && !empty($start_channel1) && !empty($start_channel2)) {
-        $cmd .= " --start-enable";
-        $cmd .= " --start-zone1=" . escapeshellarg($start_zone1);
-        $cmd .= " --start-zone2=" . escapeshellarg($start_zone2);
-        $cmd .= " --start-channel1=" . escapeshellarg($start_channel1);
-        $cmd .= " --start-channel2=" . escapeshellarg($start_channel2);
-    } else {
-        print_html_div("WARNING", "#FFFFBB", 
-            "Startup options enabled but not all four zone/channel names provided. They have been ignored.");
-    }
+// Add Optional Settings template if provided
+if (!empty($optional_settings)) {
+    $cmd .= " --optional-settings-csv='$optional_settings'";
+}
+
+// Add startup options if all four are provided
+$start_provided = !empty($start_zone1) && !empty($start_zone2) && !empty($start_channel1) && !empty($start_channel2);
+if ($start_provided) {
+    $cmd .= " --start-zone1=" . escapeshellarg($start_zone1);
+    $cmd .= " --start-zone2=" . escapeshellarg($start_zone2);
+    $cmd .= " --start-channel1=" . escapeshellarg($start_channel1);
+    $cmd .= " --start-channel2=" . escapeshellarg($start_channel2);
 } elseif (!empty($start_zone1) || !empty($start_zone2) || !empty($start_channel1) || !empty($start_channel2)) {
     // Some but not all provided
     print_html_div("WARNING", "#FFFFBB", 
@@ -97,6 +92,10 @@ foreach($output as $line)
     elseif (preg_match('/^ERROR: (.*)/', $line, $matches))
     {
         print_html_div("ERROR", "#FFDDDD", $matches[1]);
+    }
+    elseif (preg_match('/^INFO: (.*)/', $line, $matches))
+    {
+        print_html_div("INFO", "#CCDDFF", $matches[1]);
     }
 }
 
