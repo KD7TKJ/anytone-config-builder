@@ -14,7 +14,7 @@ $sort_order = validateSortOrder($_POST["sort"]);
 $nickname_mode = validateNicknameMode($_POST["nicknames"]);
 $hotspot_tx_permit = validateHotSpotTXPermit($_POST["hotspot"]);
 
-// NEW: Read and validate the new options
+// Read and validate the new options
 $multi_zone = isset($_POST["multi_zone"]) && $_POST["multi_zone"] == "1";
 $zone_channel_sort = validateChannelSortMode($_POST["zone_channel_sort"]);
 $scanlist_channel_sort = validateChannelSortMode($_POST["scanlist_channel_sort"]);
@@ -33,22 +33,39 @@ $cmd = "./anytone-config-builder.pl --analog-csv='$analog' "
      . "--output-directory='$outdir' --sorting=$sort_order --hotspot-tx-permit=$hotspot_tx_permit "
      . "--nicknames=$nickname_mode";
 
-// NEW: Add multi-zone flag if enabled
+// Add multi-zone flag if enabled
 if ($multi_zone) {
     $cmd .= " --multi-zone";
 }
 
-// NEW: Add zone channel sort if not default
+// Add zone channel sort if not default
 if ($zone_channel_sort != "processed") {
     $cmd .= " --zone-channel-sort=$zone_channel_sort";
 }
 
-// NEW: Add scanlist channel sort if not default
+// Add scanlist channel sort if not default
 if ($scanlist_channel_sort != "processed") {
     $cmd .= " --scanlist-channel-sort=$scanlist_channel_sort";
 }
 
-exec($cmd . 2>&1", 
+$start_zone1 = $_POST["start_zone1"] ?? "";
+$start_zone2 = $_POST["start_zone2"] ?? "";
+$start_channel1 = $_POST["start_channel1"] ?? "";
+$start_channel2 = $_POST["start_channel2"] ?? "";
+
+// Only add if all four are provided (PHP validation)
+if (!empty($start_zone1) && !empty($start_zone2) && !empty($start_channel1) && !empty($start_channel2)) {
+    $cmd .= " --start-zone1=" . escapeshellarg($start_zone1);
+    $cmd .= " --start-zone2=" . escapeshellarg($start_zone2);
+    $cmd .= " --start-channel1=" . escapeshellarg($start_channel1);
+    $cmd .= " --start-channel2=" . escapeshellarg($start_channel2);
+} elseif (!empty($start_zone1) || !empty($start_zone2) || !empty($start_channel1) || !empty($start_channel2)) {
+    // Some but not all provided - show error or ignore? We'll let the Perl script handle it.
+    // But we could also warn here:
+    // print_html_div("WARNING", "#FFFFBB", "All four startup options are required together.");
+}
+
+exec($cmd . " 2>&1", 
      $output, $return);
 
 
@@ -129,7 +146,7 @@ function validateHotSpotTXPermit($hotspot)
 
 function validateNicknameMode($nickname)
 {
-    if ($nickname == "prefix" || $nickname == "suffix" || $nickname == "prefix-forced" || $nickname = "suffix-forced")
+    if ($nickname == "prefix" || $nickname == "suffix" || $nickname == "prefix-forced" || $nickname == "suffix-forced")
     {
         return $nickname;
     }
@@ -139,7 +156,7 @@ function validateNicknameMode($nickname)
     }
 }
 
-// NEW: Validation function for channel sort modes
+// Validation function for channel sort modes
 function validateChannelSortMode($mode)
 {
     $valid_modes = array("processed", "alpha", "id", "freq-asc", "freq-desc");
