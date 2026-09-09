@@ -62,7 +62,6 @@ my $global_start_zone1 = "";
 my $global_start_zone2 = "";
 my $global_start_channel1 = "";
 my $global_start_channel2 = "";
-my $global_start_ch_use = 0;  # default: off (0)
 my %zone_id_by_name;          # map zone name -> zone number
 
 my $global_line_number = 0;
@@ -1006,10 +1005,14 @@ sub write_optional_settings_file
 {
     my ($filename) = @_;
 
-    # Skip if no startup options were specified
-    if (!defined($global_start_zone1) || length($global_start_zone1) == 0) {
-        return;
-    }
+    # Skip if not all four startup options are specified
+    my $num_start_opts = 0;
+    $num_start_opts++ if (defined($global_start_zone1) && length($global_start_zone1) > 0);
+    $num_start_opts++ if (defined($global_start_zone2) && length($global_start_zone2) > 0);
+    $num_start_opts++ if (defined($global_start_channel1) && length($global_start_channel1) > 0);
+    $num_start_opts++ if (defined($global_start_channel2) && length($global_start_channel2) > 0);
+
+    return if ($num_start_opts < 4);
 
     my @headers = ("StartChUse", "StartZone1", "StartZone2", "StartCurChan1", "StartCurChan2");
 
@@ -1017,24 +1020,19 @@ sub write_optional_settings_file
 
     $csv_out->print($fh, \@headers);
 
-    # StartChUse: 0 = Off, 1 = On
-    my $start_ch_use = $global_start_ch_use ? 1 : 0;
+    # StartChUse: 1 = On (all four options are provided)
+    my $start_ch_use = 1;
 
     my $zone1_id = $zone_id_by_name{$global_start_zone1} - 1;
     my $zone2_id = $zone_id_by_name{$global_start_zone2} - 1;
     my $chan1_pos = find_channel_position($global_start_zone1, $global_start_channel1);
     my $chan2_pos = find_channel_position($global_start_zone2, $global_start_channel2);
 
-    # Fallback to 1 if position not found (shouldn't happen if validation passed)
-    $chan1_pos = 1 unless $chan1_pos;
-    $chan2_pos = 1 unless $chan2_pos;
-
     my @values = ($start_ch_use, $zone1_id, $zone2_id, $chan1_pos, $chan2_pos);
     $csv_out->print($fh, \@values);
 
     close($fh) or error("Couldn't close file '$filename': $!\n");
 }
-
 
 ################################################################################
 ################################################################################
@@ -1323,26 +1321,21 @@ sub handle_command_line_args
     validate_channel_sort_mode($global_zone_channel_sort);
     validate_channel_sort_mode($global_scanlist_channel_sort);
 
-    # Validate startup options - all or nothing (if start-enable is set)
+    # Count how many startup options are provided
     my $num_start_opts = 0;
     $num_start_opts++ if (defined($global_start_zone1) && length($global_start_zone1) > 0);
     $num_start_opts++ if (defined($global_start_zone2) && length($global_start_zone2) > 0);
     $num_start_opts++ if (defined($global_start_channel1) && length($global_start_channel1) > 0);
     $num_start_opts++ if (defined($global_start_channel2) && length($global_start_channel2) > 0);
 
-    # If start-enable is set, require all four options
-    if ($global_start_ch_use) {
-        if ($num_start_opts < 4) {
-            error("--start-enable requires all four --start-* options:\n"
-                . "  --start-zone1, --start-zone2, --start-channel1, --start-channel2\n");
-        }
-    }
-
-    # If any startup option is provided, require all four and enable start
+    # All-or-nothing validation
     if ($num_start_opts > 0 && $num_start_opts < 4) {
         error("If any --start-* option is specified, all four must be provided:\n"
             . "  --start-zone1, --start-zone2, --start-channel1, --start-channel2\n");
     }
+
+    # If all four are provided, enable the feature
+    my $start_enabled = ($num_start_opts == 4);
 
     if (!defined($analog_filename) || !defined($digital_others_filename) || !defined($digital_repeaters_filename)
         || !defined($talkgroups_filename) || !defined($output_directory))
@@ -1376,11 +1369,11 @@ sub usage
     print "  [--multi-zone]             enable multiple zones/scanlists via '|' separator\n";
     print "  [--zone-channel-sort=(processed|alpha|id|freq-asc|freq-desc)]\n";
     print "  [--scanlist-channel-sort=(processed|alpha|id|freq-asc|freq-desc)]\n";
-    print "  [--start-enable]            Enable startup zones/channels (requires all --start-* options)\n";
-    print "  [--start-zone1=<zone>]     Zone for Receiver A (requires --start-enable)\n";
-    print "  [--start-zone2=<zone>]     Zone for Receiver B (requires --start-enable)\n";
-    print "  [--start-channel1=<chan>]  Channel for Receiver A (requires --start-enable)\n";
-    print "  [--start-channel2=<chan>]  Channel for Receiver B (requires --start-enable)\n";
+    print "  [--start-zone1=<zone>]     Zone for Receiver A\n";
+    print "  [--start-zone2=<zone>]     Zone for Receiver B\n";
+    print "  [--start-channel1=<chan>]  Channel for Receiver A\n";
+    print "  [--start-channel2=<chan>]  Channel for Receiver B\n";
+    print "        All four required together to enable startup channels.\n";
     exit -1;
 }
 
