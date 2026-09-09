@@ -19,6 +19,13 @@ $multi_zone = isset($_POST["multi_zone"]) && $_POST["multi_zone"] == "1";
 $zone_channel_sort = validateChannelSortMode($_POST["zone_channel_sort"]);
 $scanlist_channel_sort = validateChannelSortMode($_POST["scanlist_channel_sort"]);
 
+// Startup options
+$start_enable = isset($_POST["start_enable"]) && $_POST["start_enable"] == "1";
+$start_zone1 = $_POST["start_zone1"] ?? "";
+$start_zone2 = $_POST["start_zone2"] ?? "";
+$start_channel1 = $_POST["start_channel1"] ?? "";
+$start_channel2 = $_POST["start_channel2"] ?? "";
+
 $analog  = fileValidation("Analog",            $_FILES["analog"]);
 $dmr_oth = fileValidation("Digital-Others",    $_FILES["digitalothers"]);
 $dmr_rep = fileValidation("Digital-Repeaters", $_FILES["digitalrepeaters"]);
@@ -48,21 +55,22 @@ if ($scanlist_channel_sort != "processed") {
     $cmd .= " --scanlist-channel-sort=$scanlist_channel_sort";
 }
 
-$start_zone1 = $_POST["start_zone1"] ?? "";
-$start_zone2 = $_POST["start_zone2"] ?? "";
-$start_channel1 = $_POST["start_channel1"] ?? "";
-$start_channel2 = $_POST["start_channel2"] ?? "";
-
-// Only add if all four are provided (PHP validation)
-if (!empty($start_zone1) && !empty($start_zone2) && !empty($start_channel1) && !empty($start_channel2)) {
-    $cmd .= " --start-zone1=" . escapeshellarg($start_zone1);
-    $cmd .= " --start-zone2=" . escapeshellarg($start_zone2);
-    $cmd .= " --start-channel1=" . escapeshellarg($start_channel1);
-    $cmd .= " --start-channel2=" . escapeshellarg($start_channel2);
+// Add startup options if enabled and all four are provided
+if ($start_enable) {
+    if (!empty($start_zone1) && !empty($start_zone2) && !empty($start_channel1) && !empty($start_channel2)) {
+        $cmd .= " --start-enable";
+        $cmd .= " --start-zone1=" . escapeshellarg($start_zone1);
+        $cmd .= " --start-zone2=" . escapeshellarg($start_zone2);
+        $cmd .= " --start-channel1=" . escapeshellarg($start_channel1);
+        $cmd .= " --start-channel2=" . escapeshellarg($start_channel2);
+    } else {
+        print_html_div("WARNING", "#FFFFBB", 
+            "Startup options enabled but not all four zone/channel names provided. They have been ignored.");
+    }
 } elseif (!empty($start_zone1) || !empty($start_zone2) || !empty($start_channel1) || !empty($start_channel2)) {
-    // Some but not all provided - show error or ignore? We'll let the Perl script handle it.
-    // But we could also warn here:
-    // print_html_div("WARNING", "#FFFFBB", "All four startup options are required together.");
+    // Some but not all provided
+    print_html_div("WARNING", "#FFFFBB", 
+        "All four startup options are required together. They have been ignored.");
 }
 
 exec($cmd . " 2>&1", 
