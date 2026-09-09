@@ -117,7 +117,7 @@ sub main
         if ($num_start_opts == 4) {
             # Read template, override, write
             my ($headers_ref, $values_ref) = read_optional_settings_template($global_optional_settings_filename);
-            write_optional_settings_file_full("$output_directory/optional_settings.csv", $headers_ref, $values_ref);
+            write_optional_settings_file_full("$output_directory/OptionalSetting_FULL.csv", $headers_ref, $values_ref);
             print "INFO: Optional Settings generated with startup options.\n";
         } else {
             warning("Optional Settings template provided but startup options are missing (all four --start-* options required). Skipping.");
