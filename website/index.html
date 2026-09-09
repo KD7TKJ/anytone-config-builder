@@ -79,19 +79,17 @@ Scanlist Channel Sort Order: <select name="scanlist_channel_sort">
 <!-- Startup Options -->
 <b>Startup Options:</b> [<a href="advanced-options.html">help</a>]
 <i>(all four required together)</i><br/>
-<table>
-<tr>
-  <td>Receiver A Zone:</td>
-  <td><input type="text" name="start_zone1" placeholder="Zone Name"></td>
-  <td>Receiver A Channel:</td>
-  <td><input type="text" name="start_channel1" placeholder="Channel Name"></td>
-</tr>
-<tr>
-  <td>Receiver B Zone:</td>
-  <td><input type="text" name="start_zone2" placeholder="Zone Name"></td>
-  <td>Receiver B Channel:</td>
-  <td><input type="text" name="start_channel2" placeholder="Channel Name"></td>
-</tr>
+<table style="border-collapse: collapse; margin-top: 5px; margin-bottom: 5px;">
+  <tr>
+    <td style="padding: 2px 5px;"><b>Receiver A:</b></td>
+    <td style="padding: 2px 5px;"><input type="text" name="start_zone1" placeholder="Zone"></td>
+    <td style="padding: 2px 5px;"><input type="text" name="start_channel1" placeholder="Channel"></td>
+  </tr>
+  <tr>
+    <td style="padding: 2px 5px;"><b>Receiver B:</b></td>
+    <td style="padding: 2px 5px;"><input type="text" name="start_zone2" placeholder="Zone"></td>
+    <td style="padding: 2px 5px;"><input type="text" name="start_channel2" placeholder="Channel"></td>
+  </tr>
 </table>
 <br/>
 <input type="submit" value="Upload" name="Upload">
