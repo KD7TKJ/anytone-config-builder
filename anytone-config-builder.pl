@@ -97,14 +97,14 @@ exit 0;
 
 sub main
 {
+    my ($analog_filename, $digital_others_filename, $digital_repeaters_filename, $talkgroups_filename,
+        $config_directory, $output_directory) = handle_command_line_args();
+
     if ($global_json_mode)
     {
         run_json_mode();
         return;
     }
-
-    my ($analog_filename, $digital_others_filename, $digital_repeaters_filename, $talkgroups_filename,
-        $config_directory, $output_directory) = handle_command_line_args();
 
     $csv     = Text::CSV_XS->new({binary => 1, auto_diag => 1, always_quote => 1, eol => "\n"});
     $csv_out = Text::CSV_XS->new({binary => 1, auto_diag => 1, always_quote => 1, eol => "\r\n"});
@@ -173,7 +173,7 @@ sub write_channels_file
 {
     my ($filename) = @_;
 
-    open(my $fh, ">$filename") or error("Couldn't open file '$filename': $!\n");
+    my $fh = open_output_sink($filename);
     print_channel_header($fh);
 
     foreach my $row (@channel_rows)
@@ -737,6 +737,9 @@ sub run_json_mode
         next if (defined $inputs->{$name} && $inputs->{$name} ne '');
         json_response({ status => 'error', message => "Missing required input: $name" });
     }
+
+    $csv     = Text::CSV_XS->new({binary => 1, auto_diag => 1, always_quote => 1, eol => "\n"});
+    $csv_out = Text::CSV_XS->new({binary => 1, auto_diag => 1, always_quote => 1, eol => "\r\n"});
 
     my $workdir = File::Temp::tempdir('acb-json-XXXXXX', TMPDIR => 1, CLEANUP => 1);
     for my $name (@required)
