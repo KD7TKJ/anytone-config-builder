@@ -770,7 +770,7 @@ sub run_json_mode
     write_channels_file("channels.csv");
     write_zone_file("zones.csv");
     write_scanlist_file("scanlists.csv");
-    write_talkgroup_file("talkgroups_out.csv");
+    write_talkgroup_file("talkgroups.csv");
 
     my $num_start_opts = count_startup_options();
     if ($num_start_opts == 4) {
@@ -782,7 +782,7 @@ sub run_json_mode
     }
 
     my %files;
-    for my $filename (qw(channels.csv zones.csv scanlists.csv talkgroups_out.csv OptionalSettings_STUB.csv OptionalSettings_Full.csv))
+    for my $filename (qw(channels.csv zones.csv scanlists.csv talkgroups.csv OptionalSettings_STUB.csv OptionalSettings_Full.csv))
     {
         my $safe_name = safe_output_key($filename);
         if ($safe_name eq '') {
