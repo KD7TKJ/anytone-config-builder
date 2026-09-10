@@ -661,6 +661,9 @@ sub run_json_mode
         json_response({ status => 'error', message => 'Invalid JSON request' });
     }
 
+    my $safe_mode = $request->{mode} // 'build';
+    $safe_mode =~ s/[^A-Za-z0-9_-]/_/g;
+
     my $inputs = $request->{inputs} // {};
     my $options = $request->{options} // {};
     my $startup = $request->{startup} // {};
@@ -731,9 +734,13 @@ sub run_json_mode
     {
         my $path = "$workdir/$filename";
         next if (!-f $path);
+        my $safe_name = safe_output_key($filename);
+        if ($safe_name eq '') {
+            json_response({ status => 'error', message => "Refusing to emit file with unsafe name '$filename'" });
+        }
         local $/ = undef;
         open(my $fh, '<:raw', $path) or next;
-        $files{$filename} = <$fh>;
+        $files{$safe_name} = <$fh>;
         close($fh);
     }
 
