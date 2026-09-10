@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    if (!window.FileReader || !window.fetch || !window.FormData || !window.Blob) {
+    if (!window.FileReader || !window.fetch || !window.Blob) {
         return;
     }
 
@@ -45,9 +45,11 @@
             if (expertMode) {
                 await doBuild();
             } else if (phase === 'initial') {
-                await doAnalyze();
-                phase = 'analyzed';
-                if (submitButton) submitButton.value = 'Generate';
+                var ok = await doAnalyze();
+                if (ok) {
+                    phase = 'analyzed';
+                    if (submitButton) submitButton.value = 'Generate';
+                }
             } else {
                 await doBuild();
             }
@@ -113,7 +115,7 @@
     async function postJson(payload) {
         var res;
         try {
-            res = await fetch('json-endpoint.php', {
+            res = await fetch('../json-endpoint.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -148,13 +150,14 @@
 
         if (resp.status !== 'ok') {
             showError(resp.message || 'Analyze failed');
-            return;
+            return false;
         }
 
         populateStartupDropdowns(resp.zones || []);
         if (startupSection) startupSection.style.display = 'block';
         showInfo('Zones and channels discovered. Choose startup zone/channels if desired, then click Generate.');
         displayWarnings(resp.warnings);
+        return true;
     }
 
     async function doBuild() {

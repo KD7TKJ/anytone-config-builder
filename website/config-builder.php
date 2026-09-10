@@ -38,13 +38,14 @@ if (isset($_FILES["optional_settings"]) && $_FILES["optional_settings"]["size"] 
 }
 
 $outdir = tempdir("dmr-output-");
-
+$script = __DIR__ . '/../anytone-config-builder.pl';
+$config = __DIR__ . '/../config';
 
 // Build the command with all options
-$cmd = "./anytone-config-builder.pl --analog-csv='$analog' "
-     . "--digital-others-csv='$dmr_oth' --digital-repeaters-csv='$dmr_rep' --talkgroups-csv='$talkgrp' "
-     . "--output-directory='$outdir' --sorting=$sort_order --hotspot-tx-permit=$hotspot_tx_permit "
-     . "--nicknames=$nickname_mode";
+$cmd = escapeshellarg($script) . " --analog-csv='" . escapeshellarg($analog) . "' "
+     . "--digital-others-csv='" . escapeshellarg($dmr_oth) . "' --digital-repeaters-csv='" . escapeshellarg($dmr_rep) . "' --talkgroups-csv='" . escapeshellarg($talkgrp) . "' "
+     . "--output-directory='" . escapeshellarg($outdir) . "' --sorting=$sort_order --hotspot-tx-permit=$hotspot_tx_permit "
+     . "--nicknames=$nickname_mode --config='" . escapeshellarg($config) . "'";
 
 // Add multi-zone flag if enabled
 if ($multi_zone) {
