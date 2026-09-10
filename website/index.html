@@ -2,6 +2,13 @@
 <head>
 <title>Anytone Config Builder</title>
   <link rel="stylesheet" href="pandoc.css" type="text/css" />
+  <style>
+    #results { margin-top: 10px; }
+    .result-error   { background-color:#FFDDDD; border:1px solid #888888; padding:5px; margin-bottom:5px; }
+    .result-warning { background-color:#FFFFBB; border:1px solid #888888; padding:5px; margin-bottom:5px; }
+    .result-info    { background-color:#CCDDFF; border:1px solid #888888; padding:5px; margin-bottom:5px; }
+    .result-success { background-color:#DDFFDD; border:1px solid #888888; padding:5px; margin-bottom:5px; }
+  </style>
 </head>
 <body>
 
@@ -11,7 +18,7 @@
 Be sure to check out the [<a href="getting-started.html">Getting Started Guide</a>].<br>
 <br>
 <div style='border: 1px solid #888888; padding: 5px'>
-<form action="config-builder.php" method="post" enctype="multipart/form-data">
+<form id="config-form" action="config-builder.php" method="post" enctype="multipart/form-data">
 
 <font size="+1"><b>The Tool:</b></font>
 <br>
@@ -77,6 +84,7 @@ Scanlist Channel Sort Order: <select name="scanlist_channel_sort">
 <br/>
 <br/>
 <!-- Startup Options -->
+<div id="startup-section">
 <b>Startup Options:</b> [<a href="advanced-options.html">help</a>] <i>(all four required together)</i><br/>
 <table>
 <tr>
@@ -97,11 +105,23 @@ Scanlist Channel Sort Order: <select name="scanlist_channel_sort">
 </tr>
 </table>
 <br/>
+</div>
+
+<div id="expert-toggle-container" style="display:none;">
+    <a href="#" id="expert-toggle">Expert Mode</a>
+    &mdash; skip the guided flow and type zone/channel names directly.
+    <br/><br/>
+</div>
+
 <input type="submit" value="Upload" name="Upload">
 </form>
+
+<div id="results"></div>
 
 </div>
 
 <p> Not working for you?  Email me: k7abd@arrl.net.</p>
+
+<script src="config-builder.js" defer></script>
 </body>
 </html>
