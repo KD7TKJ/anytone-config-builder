@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    if (!window.FileReader || !window.fetch || !window.FormData || !window.Blob) {
+    if (!window.FileReader || !window.fetch || !window.Blob) {
         return;
     }
 

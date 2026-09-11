@@ -1,241 +1,170 @@
 <?php
-error_reporting( E_ALL );
-ini_set('display_errors', 1);
+/**
+ * Stateless JSON endpoint for the JavaScript-enhanced frontend.
+ *
+ * Accepts a JSON POST body and pipes it to anytone-config-builder.pl
+ * running in --json-mode. Returns the Perl script's stdout as the
+ * HTTP response.
+ *
+ * No files are written to disk. The Perl script is expected to emit
+ * valid JSON on stdout for both success and error cases.
+ *
+ * Response discipline:
+ *   - The entire response body is buffered.
+ *   - A shutdown handler emits it, so PHP fatals still produce JSON.
+ *   - Content-Type is set only when we're about to emit.
+ *   - display_errors is off; everything goes to the error log.
+ *
+ * Security:
+ *   - proc_open is called with an array argv, bypassing the shell.
+ *   - Request bodies larger than 5 MB are rejected before parsing.
+ *   - The Perl script and config directory are resolved with absolute
+ *     paths derived from __DIR__, so the endpoint is independent of
+ *     its own working directory.
+ */
 
-if(!isset($_FILES["analog"])) {
-    header("Location: ./");
-    exit(0);
+error_reporting(E_ALL);
+ini_set('display_errors', 0);
+ini_set('log_errors', 1);
+
+// Swallow any output that PHP or our own code might accidentally produce.
+ob_start();
+
+$response_body = null;
+$response_status = 200;
+
+function emit_json($data, $status = 200)
+{
+    global $response_body, $response_status;
+    $response_body = json_encode($data);
+    $response_status = $status;
 }
 
+function finalize_response()
+{
+    global $response_body, $response_status;
 
-print_html_start();
+    // Discard anything buffered (warnings, notices, stray output).
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+
+    if ($response_body === null) {
+        $response_body = json_encode([
+            'status'  => 'error',
+            'message' => 'Server error: no response was produced',
+        ]);
+        $response_status = 500;
+    }
+
+    if (!headers_sent()) {
+        header('Content-Type: application/json');
+        http_response_code($response_status);
+    }
+    echo $response_body;
+}
+
+register_shutdown_function('finalize_response');
+
+// -----------------------------------------------------------------
+// Request parsing
+// -----------------------------------------------------------------
+
+$raw = file_get_contents('php://input');
+if ($raw === false || strlen($raw) === 0) {
+    emit_json(['status' => 'error', 'message' => 'Empty request body'], 400);
+    return;
+}
+
+if (strlen($raw) > 5 * 1024 * 1024) {
+    emit_json(['status' => 'error', 'message' => 'Request too large'], 413);
+    return;
+}
+
+$request = json_decode($raw, true);
+if (!is_array($request)) {
+    emit_json(['status' => 'error', 'message' => 'Invalid JSON in request'], 400);
+    return;
+}
+
+// -----------------------------------------------------------------
+// Locate the Perl script and config directory.
+//
+// This file lives in website/. The Perl script and its config sit
+// one directory up, at the repository root. __DIR__ gives us the
+// absolute path of this file's directory regardless of CWD.
+// -----------------------------------------------------------------
 
 $project_root = dirname(__DIR__);
-$script_path = $project_root . '/anytone-config-builder.pl';
-$config_dir = $project_root . '/config';
+$script_path  = $project_root . '/anytone-config-builder.pl';
+$config_dir   = $project_root . '/config';
 
 if (!is_file($script_path)) {
-    fatal("Perl script not found at: $script_path");
-}
-if (!is_dir($config_dir)) {
-    fatal("Config directory not found at: $config_dir");
+    emit_json(['status' => 'error', 'message' => 'Perl script not found'], 500);
+    return;
 }
 
-$sort_order = validateSortOrder($_POST["sort"]);
-$nickname_mode = validateNicknameMode($_POST["nicknames"]);
-$hotspot_tx_permit = validateHotSpotTXPermit($_POST["hotspot"]);
+// -----------------------------------------------------------------
+// Spawn the Perl script.
+//
+// Passing an array to proc_open bypasses the shell entirely: no
+// escapeshellarg, no metacharacter interpretation, no /bin/sh in the
+// process tree.
+// -----------------------------------------------------------------
 
-// Read and validate the new options
-$multi_zone = isset($_POST["multi_zone"]) && $_POST["multi_zone"] == "1";
-$zone_channel_sort = validateChannelSortMode($_POST["zone_channel_sort"]);
-$scanlist_channel_sort = validateChannelSortMode($_POST["scanlist_channel_sort"]);
+$cmd = [
+    $script_path,
+    '--json-mode',
+    '--config=' . $config_dir,
+];
 
-// Startup options
-$start_zone1 = $_POST["start_zone1"] ?? "";
-$start_zone2 = $_POST["start_zone2"] ?? "";
-$start_channel1 = $_POST["start_channel1"] ?? "";
-$start_channel2 = $_POST["start_channel2"] ?? "";
+$descriptors = [
+    0 => ['pipe', 'r'],
+    1 => ['pipe', 'w'],
+    2 => ['pipe', 'w'],
+];
 
-// Validate required files
-$analog  = fileValidation("Analog",            $_FILES["analog"]);
-$dmr_oth = fileValidation("Digital-Others",    $_FILES["digitalothers"]);
-$dmr_rep = fileValidation("Digital-Repeaters", $_FILES["digitalrepeaters"]);
-$talkgrp = fileValidation("TalkGroups",        $_FILES["talkgroups"]);
-
-// Optional Settings (if provided)
-$optional_settings = "";
-if (isset($_FILES["optional_settings"]) && $_FILES["optional_settings"]["size"] > 0) {
-    $optional_settings = fileValidation("Optional Settings", $_FILES["optional_settings"]);
+$process = proc_open($cmd, $descriptors, $pipes);
+if (!is_resource($process)) {
+    emit_json(['status' => 'error', 'message' => 'Could not start Perl script'], 500);
+    return;
 }
 
-$outdir = tempdir("dmr-output-");
+fwrite($pipes[0], $raw);
+fclose($pipes[0]);
 
+$stdout = stream_get_contents($pipes[1]);
+$stderr = stream_get_contents($pipes[2]);
+fclose($pipes[1]);
+fclose($pipes[2]);
+$exit_code = proc_close($process);
 
-// Build the command with all options.
-// Use absolute paths because this file is now located in ./website and the Perl script lives at the project root.
-$cmd = escapeshellarg($script_path)
-     . ' --config=' . escapeshellarg($config_dir)
-     . ' --analog-csv=' . escapeshellarg($analog)
-     . ' --digital-others-csv=' . escapeshellarg($dmr_oth)
-     . ' --digital-repeaters-csv=' . escapeshellarg($dmr_rep)
-     . ' --talkgroups-csv=' . escapeshellarg($talkgrp)
-     . ' --output-directory=' . escapeshellarg($outdir)
-     . ' --sorting=' . escapeshellarg($sort_order)
-     . ' --hotspot-tx-permit=' . escapeshellarg($hotspot_tx_permit)
-     . ' --nicknames=' . escapeshellarg($nickname_mode);
-
-// Add multi-zone flag if enabled
-if ($multi_zone) {
-    $cmd .= ' --multi-zone';
+if ($stderr !== '') {
+    error_log('anytone-config-builder stderr: ' . $stderr);
 }
 
-// Add zone channel sort if not default
-if ($zone_channel_sort != "processed") {
-    $cmd .= ' --zone-channel-sort=' . escapeshellarg($zone_channel_sort);
+if (strlen($stdout) === 0) {
+    emit_json([
+        'status'  => 'error',
+        'message' => 'Perl script produced no output',
+        'exit'    => $exit_code,
+    ], 500);
+    return;
 }
 
-// Add scanlist channel sort if not default
-if ($scanlist_channel_sort != "processed") {
-    $cmd .= ' --scanlist-channel-sort=' . escapeshellarg($scanlist_channel_sort);
+// Pass the Perl output through verbatim. The Perl script is contractually
+// obligated to emit valid JSON; if it doesn't, the client will see the
+// parse failure and we'll have the stderr in the log.
+$decoded = json_decode($stdout, true);
+if ($decoded === null) {
+    error_log('anytone-config-builder produced non-JSON stdout: ' . substr($stdout, 0, 500));
+    emit_json([
+        'status'  => 'error',
+        'message' => 'Perl script produced invalid JSON',
+    ], 500);
+    return;
 }
 
-// Add Optional Settings template if provided
-if (!empty($optional_settings)) {
-    $cmd .= ' --optional-settings-csv=' . escapeshellarg($optional_settings);
-}
-
-// Add startup options if all four are provided
-$start_provided = !empty($start_zone1) && !empty($start_zone2) && !empty($start_channel1) && !empty($start_channel2);
-if ($start_provided) {
-    $cmd .= " --start-zone1=" . escapeshellarg($start_zone1);
-    $cmd .= " --start-zone2=" . escapeshellarg($start_zone2);
-    $cmd .= " --start-channel1=" . escapeshellarg($start_channel1);
-    $cmd .= " --start-channel2=" . escapeshellarg($start_channel2);
-} elseif (!empty($start_zone1) || !empty($start_zone2) || !empty($start_channel1) || !empty($start_channel2)) {
-    // Some but not all provided
-    print_html_div("WARNING", "#FFFFBB", 
-        "All four startup options are required together. They have been ignored.");
-}
-
-exec($cmd . " 2>&1", 
-     $output, $return);
-
-
-foreach($output as $line)
-{
-    if (preg_match('/^WARNING: (.*)/', $line, $matches))
-    {
-        print_html_div("WARNING", "#FFFFBB", $matches[1]);
-    }
-    elseif (preg_match('/^ERROR: (.*)/', $line, $matches))
-    {
-        print_html_div("ERROR", "#FFDDDD", $matches[1]);
-    }
-    elseif (preg_match('/^INFO: (.*)/', $line, $matches))
-    {
-        print_html_div("INFO", "#CCDDFF", $matches[1]);
-    }
-}
-
-
-if ($return == 0)
-{
-    print_html_div("SUCCESS", "#DDFFDD", "It worked!  Your files should be downloading now.");
-    print "<iframe style='display:none;' src='download.php?name=$outdir'></iframe>";
-}
-
-
-function fileValidation($description, $file_details)
-{
-    $file_type = $file_details["type"];
-    $tmp_name  = $file_details["tmp_name"];
-    $size      = $file_details["size"];
-
-    if ($size == 0)
-    {
-        fatal("$description file is empty... did you forget to upload it?");
-    }
-    if ($size > (1024*1024))
-    {
-        fatal("$description file is > 1MB.  That's bigger than I'm cool with :D");
-    }
-
-    return $tmp_name;
-}
-
-function tempdir($prefix='') {
-    $tempfile=tempnam(sys_get_temp_dir(), $prefix);
-    // you might want to reconsider this line when using this snippet.
-    // it "could" clash with an existing directory and this line will
-    // try to delete the existing one. Handle with caution.
-    if (file_exists($tempfile)) { unlink($tempfile); }
-    mkdir($tempfile);
-    if (is_dir($tempfile)) { return $tempfile; }
-}
-
-
-function validateSortOrder($sort_order)
-{
-    if ($sort_order == "alpha" ||
-        $sort_order == "repeaters-first" || 
-        $sort_order == "analog-first" )
-    {
-        return $sort_order;
-    }
-    else
-    {
-        return 'alpha';
-    }
-}
-
-function validateHotSpotTXPermit($hotspot)
-{
-    if ($hotspot == "always" || $hotspot == "same-color-code")
-    {
-        return $hotspot;
-    }
-    else
-    {
-        return "same-color-code";
-    }
-}
-
-function validateNicknameMode($nickname)
-{
-    if ($nickname == "prefix" || $nickname == "suffix" || $nickname == "prefix-forced" || $nickname == "suffix-forced")
-    {
-        return $nickname;
-    }
-    else
-    {
-        return "off";
-    }
-}
-
-// Validation function for channel sort modes
-function validateChannelSortMode($mode)
-{
-    $valid_modes = array("processed", "alpha", "id", "freq-asc", "freq-desc");
-    if (in_array($mode, $valid_modes))
-    {
-        return $mode;
-    }
-    else
-    {
-        return "processed";  // default
-    }
-}
-
-function fatal($message)
-{
-    print_html_div("ERROR", "#FFDDDD", $message);
-    print_html_end();
-}
-
-
-function print_html_start()
-{
-?>
-<html>
-<head>
-<title>Anytone Config Builder</title>
-  <link rel="stylesheet" href="pandoc.css" type="text/css" />
-</head>
-<body>
-
-<h1>K7ABD's Anytone Config Builder</h1>
-
-<?php
-}
-
-function print_html_div($description, $color, $message)
-{
-    print "$description:<div style='background-color:$color; border: 1px solid #888888; padding: 5px; margin-top: 0px; margin-bottom: 5px;'>$message</div>";
-}
-
-function print_html_end()
-{
-    print "</body></html>";
-    exit(0);
-}
-?>
+echo $stdout;
+$response_body = $stdout;   // tell finalize_response not to overwrite
+$response_status = 200;
