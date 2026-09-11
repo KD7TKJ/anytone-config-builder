@@ -96,17 +96,17 @@ exit 0;
 
 sub main
 {
-    if ($global_json_mode)
-    {
-        run_json_mode();
-        return;
-    }
-
     my ($analog_filename, $digital_others_filename, $digital_repeaters_filename, $talkgroups_filename,
         $config_directory, $output_directory) = handle_command_line_args();
 
     $csv     = Text::CSV_XS->new({binary => 1, auto_diag => 1, always_quote => 1, eol => "\n"});
     $csv_out = Text::CSV_XS->new({binary => 1, auto_diag => 1, always_quote => 1, eol => "\r\n"});
+
+    if ($global_json_mode)
+    {
+        run_json_mode();
+        return;
+    }
 
     read_talkgroups($talkgroups_filename);
     read_channel_csv_default( "$config_directory/channel-defaults.csv");

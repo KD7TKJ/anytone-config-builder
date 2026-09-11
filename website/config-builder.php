@@ -10,6 +10,17 @@ if(!isset($_FILES["analog"])) {
 
 print_html_start();
 
+$project_root = dirname(__DIR__);
+$script_path = $project_root . '/anytone-config-builder.pl';
+$config_dir = $project_root . '/config';
+
+if (!is_file($script_path)) {
+    fatal("Perl script not found at: $script_path");
+}
+if (!is_dir($config_dir)) {
+    fatal("Config directory not found at: $config_dir");
+}
+
 $sort_order = validateSortOrder($_POST["sort"]);
 $nickname_mode = validateNicknameMode($_POST["nicknames"]);
 $hotspot_tx_permit = validateHotSpotTXPermit($_POST["hotspot"]);
@@ -40,30 +51,37 @@ if (isset($_FILES["optional_settings"]) && $_FILES["optional_settings"]["size"] 
 $outdir = tempdir("dmr-output-");
 
 
-// Build the command with all options
-$cmd = "./anytone-config-builder.pl --analog-csv='$analog' "
-     . "--digital-others-csv='$dmr_oth' --digital-repeaters-csv='$dmr_rep' --talkgroups-csv='$talkgrp' "
-     . "--output-directory='$outdir' --sorting=$sort_order --hotspot-tx-permit=$hotspot_tx_permit "
-     . "--nicknames=$nickname_mode";
+// Build the command with all options.
+// Use absolute paths because this file is now located in ./website and the Perl script lives at the project root.
+$cmd = escapeshellarg($script_path)
+     . ' --config=' . escapeshellarg($config_dir)
+     . ' --analog-csv=' . escapeshellarg($analog)
+     . ' --digital-others-csv=' . escapeshellarg($dmr_oth)
+     . ' --digital-repeaters-csv=' . escapeshellarg($dmr_rep)
+     . ' --talkgroups-csv=' . escapeshellarg($talkgrp)
+     . ' --output-directory=' . escapeshellarg($outdir)
+     . ' --sorting=' . escapeshellarg($sort_order)
+     . ' --hotspot-tx-permit=' . escapeshellarg($hotspot_tx_permit)
+     . ' --nicknames=' . escapeshellarg($nickname_mode);
 
 // Add multi-zone flag if enabled
 if ($multi_zone) {
-    $cmd .= " --multi-zone";
+    $cmd .= ' --multi-zone';
 }
 
 // Add zone channel sort if not default
 if ($zone_channel_sort != "processed") {
-    $cmd .= " --zone-channel-sort=$zone_channel_sort";
+    $cmd .= ' --zone-channel-sort=' . escapeshellarg($zone_channel_sort);
 }
 
 // Add scanlist channel sort if not default
 if ($scanlist_channel_sort != "processed") {
-    $cmd .= " --scanlist-channel-sort=$scanlist_channel_sort";
+    $cmd .= ' --scanlist-channel-sort=' . escapeshellarg($scanlist_channel_sort);
 }
 
 // Add Optional Settings template if provided
 if (!empty($optional_settings)) {
-    $cmd .= " --optional-settings-csv='$optional_settings'";
+    $cmd .= ' --optional-settings-csv=' . escapeshellarg($optional_settings);
 }
 
 // Add startup options if all four are provided
