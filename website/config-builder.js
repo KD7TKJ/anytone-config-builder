@@ -45,9 +45,11 @@
             if (expertMode) {
                 await doBuild();
             } else if (phase === 'initial') {
-                await doAnalyze();
-                phase = 'analyzed';
-                if (submitButton) submitButton.value = 'Generate';
+                var ok = await doAnalyze();
+                if (ok) {
+                    phase = 'analyzed';
+                    if (submitButton) submitButton.value = 'Generate';
+                }
             } else {
                 await doBuild();
             }
@@ -148,13 +150,14 @@
 
         if (resp.status !== 'ok') {
             showError(resp.message || 'Analyze failed');
-            return;
+            return false;
         }
 
         populateStartupDropdowns(resp.zones || []);
         if (startupSection) startupSection.style.display = 'block';
         showInfo('Zones and channels discovered. Choose startup zone/channels if desired, then click Generate.');
         displayWarnings(resp.warnings);
+        return true;
     }
 
     async function doBuild() {

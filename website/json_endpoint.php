@@ -54,6 +54,11 @@ if ($raw === false || strlen($raw) === 0) {
     return;
 }
 
+if (strlen($raw) > 5 * 1024 * 1024) {
+    emit_json(['status' => 'error', 'message' => 'Request too large'], 413);
+    return;
+}
+
 $request = json_decode($raw, true);
 if (!is_array($request)) {
     emit_json(['status' => 'error', 'message' => 'Invalid JSON in request'], 400);
@@ -69,9 +74,11 @@ if (!is_file($script_path)) {
     return;
 }
 
-$cmd = escapeshellarg($script_path)
-     . ' --json-mode'
-     . ' --config=' . escapeshellarg($config_dir);
+$cmd = [
+    $script_path,
+    '--json-mode',
+    '--config=' . $config_dir,
+];
 
 $descriptors = [
     0 => ['pipe', 'r'],
