@@ -85,6 +85,7 @@ my $analog_channel_index = 0;
 my %scanlist_config;
 my %talkgroup_config;
 my %talkgroup_order;
+my @channel_rows;
 my $csv;
 my $csv_out;
 
@@ -99,31 +100,29 @@ sub main
     my ($analog_filename, $digital_others_filename, $digital_repeaters_filename, $talkgroups_filename,
         $config_directory, $output_directory) = handle_command_line_args();
 
-    $csv     = Text::CSV_XS->new({binary => 1, auto_diag => 1, always_quote => 1, eol => "\n"});
-    $csv_out = Text::CSV_XS->new({binary => 1, auto_diag => 1, always_quote => 1, eol => "\r\n"});
-
     if ($global_json_mode)
     {
         run_json_mode();
         return;
     }
 
+    $csv     = Text::CSV_XS->new({binary => 1, auto_diag => 1, always_quote => 1, eol => "\n"});
+    $csv_out = Text::CSV_XS->new({binary => 1, auto_diag => 1, always_quote => 1, eol => "\r\n"});
+
     read_talkgroups($talkgroups_filename);
     read_channel_csv_default( "$config_directory/channel-defaults.csv");
 
-    open (my $fh, '>', "$output_directory/channels.csv") or error("Couldn't open channels.csv for writing\n");
-    print_channel_header($fh);
-    process_dmr_others_file(  $fh, $digital_others_filename);
-    process_dmr_repeater_file($fh, $digital_repeaters_filename);
-    process_analog_file(      $fh, $analog_filename);
-    close ($fh);
+    process_dmr_others_file($digital_others_filename);
+    process_dmr_repeater_file($digital_repeaters_filename);
+    process_analog_file($analog_filename);
 
+    compute_zone_ids();
+    validate_startup_options();
+
+    write_channels_file("$output_directory/channels.csv");
     write_zone_file("$output_directory/zones.csv");
     write_scanlist_file("$output_directory/scanlists.csv");
     write_talkgroup_file("$output_directory/talkgroups.csv");
-
-    # Validate startup options (zones/channels must exist)
-    validate_startup_options();
 
     # Handle Optional Settings
     my $num_start_opts = count_startup_options();
@@ -158,6 +157,56 @@ sub main
 #####
 ##### Zone file output #####
 #####
+sub compute_zone_ids
+{
+    my $row_num = 1;
+    %zone_id_by_name = ();
+
+    foreach my $key (sort zone_sort keys %zone_config)
+    {
+        $zone_id_by_name{$key} = $row_num;
+        $row_num++;
+    }
+}
+
+sub write_channels_file
+{
+    my ($filename) = @_;
+
+    my $fh = open_output_sink($filename);
+    print_channel_header($fh);
+
+    foreach my $row (@channel_rows)
+    {
+        $csv_out->print($fh, $row);
+    }
+
+    close($fh) or error("Couldn't close file '$filename': $!\n");
+}
+
+sub open_output_sink
+{
+    my ($filename) = @_;
+    my $fh;
+
+    if ($global_json_mode)
+    {
+        my $safe_name = safe_output_key($filename);
+        if ($safe_name eq '')
+        {
+            error("Refusing to emit file with unsafe name '$filename'\n");
+        }
+
+        $json_outputs{$safe_name} = "";
+        open($fh, '>', \$json_outputs{$safe_name})
+            or error("Couldn't open in-memory output '$safe_name': $!\n");
+        return $fh;
+    }
+
+    open($fh, ">$filename") or error("Couldn't open file '$filename': $!\n");
+    return $fh;
+}
+
 sub write_zone_file
 {
     my ($filename) = @_;
@@ -167,16 +216,13 @@ sub write_zone_file
                      "A Channel",                  "A Channel RX Frequency",           "A Channel TX Frequency",
                      "B Channel",                  "B Channel RX Frequency",           "B Channel TX Frequency");
 
-    open(my $fh, ">$filename") or error("Couldn't open file '$filename': $!\n");
+    my $fh = open_output_sink($filename);
 
     $csv_out->print($fh, \@headers);
 
     my $row_num = 1;
     foreach my $key (sort zone_sort keys %zone_config)
     {
-        # Capture zone ID (1-based)
-        $zone_id_by_name{$key} = $row_num;
-
         my $value = $zone_config{$key};
         my $row = zone_row_builder($row_num, $key, $value);
 
@@ -347,7 +393,7 @@ sub generate_csv_file
 {
     my ($filename, $headers, $data, $row_func, $sort_func) = @_;
 
-    open(my $fh, ">$filename") or error("Couldn't open file '$filename': $!\n");
+    my $fh = open_output_sink($filename);
 
     $csv_out->print($fh, $headers);
 
@@ -424,13 +470,13 @@ sub case_insensitive_sort
 #####
 sub process_analog_file
 {
-    my ($fh, $filename) = @_;
+    my ($filename) = @_;
 
     my @header = ("Zone", "Channel Name", "Bandwidth", "Power", 
                   "RX Freq", "TX Freq", "CTCSS Decode", "CTCSS Encode",
                   "TX Prohibit");
 
-    process_csv_file_with_header($fh, $filename, "Analog", \@header, \&analog_csv_field_extractor);
+    process_csv_file_with_header($filename, "Analog", \@header, \&analog_csv_field_extractor);
 }
 
 sub analog_csv_field_extractor
@@ -464,12 +510,12 @@ sub analog_csv_field_extractor
 #####
 sub process_dmr_others_file
 {
-    my ($fh, $filename) = @_;
+    my ($filename) = @_;
 
     my @header = ("Zone", "Channel Name", "Power", "RX Freq", "TX Freq", "Color Code", "Talk Group", "TimeSlot", 
                   "Call Type", "TX Permit");
 
-    process_csv_file_with_header($fh, $filename, "Digital-Others", \@header, \&dmr_others_csv_field_extractor);
+    process_csv_file_with_header($filename, "Digital-Others", \@header, \&dmr_others_csv_field_extractor);
 }
 
 sub dmr_others_csv_field_extractor
@@ -506,11 +552,11 @@ sub dmr_others_csv_field_extractor
 
 sub process_dmr_repeater_file
 {
-    my ($fh, $filename) = @_;
+    my ($filename) = @_;
 
     my @header = ("Zone Name", "Comment", "Power", "RX Freq", "TX Freq", "Color Code");
 
-    process_csv_file_with_header($fh, $filename, "Digital-Repeater", \@header, \&dmr_repeater_csv_field_extractor, 
+    process_csv_file_with_header($filename, "Digital-Repeater", \@header, \&dmr_repeater_csv_field_extractor, 
                                                                                \&dmr_repeater_csv_matrix_extractor);
 }
 
@@ -692,6 +738,9 @@ sub run_json_mode
         json_response({ status => 'error', message => "Missing required input: $name" });
     }
 
+    $csv     = Text::CSV_XS->new({binary => 1, auto_diag => 1, always_quote => 1, eol => "\n"});
+    $csv_out = Text::CSV_XS->new({binary => 1, auto_diag => 1, always_quote => 1, eol => "\r\n"});
+
     my $workdir = File::Temp::tempdir('acb-json-XXXXXX', TMPDIR => 1, CLEANUP => 1);
     for my $name (@required)
     {
@@ -707,41 +756,41 @@ sub run_json_mode
     read_talkgroups("$workdir/talkgroups.csv");
     read_channel_csv_default("$global_config_directory/channel-defaults.csv");
 
-    my $channels_path = "$workdir/channels.csv";
-    open(my $channels_fh, '>', $channels_path) or json_response({ status => 'error', message => "Couldn't open channels.csv" });
-    print_channel_header($channels_fh);
-    process_dmr_others_file($channels_fh, "$workdir/digital_others.csv");
-    process_dmr_repeater_file($channels_fh, "$workdir/digital_repeaters.csv");
-    process_analog_file($channels_fh, "$workdir/analog.csv");
-    close($channels_fh);
+    $global_json_mode = 1;
+    %json_outputs = ();
+    @channel_rows = ();
 
-    write_zone_file("$workdir/zones.csv");
-    write_scanlist_file("$workdir/scanlists.csv");
-    write_talkgroup_file("$workdir/talkgroups_out.csv");
+    process_dmr_others_file("$workdir/digital_others.csv");
+    process_dmr_repeater_file("$workdir/digital_repeaters.csv");
+    process_analog_file("$workdir/analog.csv");
 
+    compute_zone_ids();
     validate_startup_options();
+
+    write_channels_file("channels.csv");
+    write_zone_file("zones.csv");
+    write_scanlist_file("scanlists.csv");
+    write_talkgroup_file("talkgroups.csv");
+
     my $num_start_opts = count_startup_options();
     if ($num_start_opts == 4) {
-        write_optional_settings_stub("$workdir/OptionalSettings_STUB.csv");
+        write_optional_settings_stub("OptionalSettings_STUB.csv");
         if (length($global_optional_settings_filename) > 0) {
             my ($headers_ref, $values_ref) = read_optional_settings_template($global_optional_settings_filename);
-            write_optional_settings_full("$workdir/OptionalSettings_Full.csv", $headers_ref, $values_ref);
+            write_optional_settings_full("OptionalSettings_Full.csv", $headers_ref, $values_ref);
         }
     }
 
     my %files;
-    for my $filename (qw(channels.csv zones.csv scanlists.csv talkgroups_out.csv OptionalSettings_STUB.csv OptionalSettings_Full.csv))
+    for my $filename (qw(channels.csv zones.csv scanlists.csv talkgroups.csv OptionalSettings_STUB.csv OptionalSettings_Full.csv))
     {
-        my $path = "$workdir/$filename";
-        next if (!-f $path);
         my $safe_name = safe_output_key($filename);
         if ($safe_name eq '') {
             json_response({ status => 'error', message => "Refusing to emit file with unsafe name '$filename'" });
         }
-        local $/ = undef;
-        open(my $fh, '<:raw', $path) or next;
-        $files{$safe_name} = <$fh>;
-        close($fh);
+        if (exists $json_outputs{$safe_name}) {
+            $files{$safe_name} = $json_outputs{$safe_name};
+        }
     }
 
     json_response({ status => 'ok', files => \%files, warnings => [], info => [] });
@@ -784,7 +833,7 @@ sub read_talkgroups
 #
 sub process_csv_file_with_header
 {
-    my ($out_fh, $filename, $file_nickname, $header_ref, $field_extractor, $matrix_field_extractor) = @_;
+    my ($filename, $file_nickname, $header_ref, $field_extractor, $matrix_field_extractor) = @_;
 
     my @headers;
 
@@ -833,7 +882,7 @@ sub process_csv_file_with_header
                 # ... this is a hack and shouldn't live here =/
                 my $scanlist_name = $chan_config->{+CHAN_SCANLIST_NAME};
 
-                add_channel($out_fh, $chan_config, $zone_name, $scanlist_name, $zone_order_default);
+                add_channel($chan_config, $zone_name, $scanlist_name, $zone_order_default);
             }
 
             # matrixed CSV files... so iterate through each of the extra headers, which are the talk groups...
@@ -858,7 +907,7 @@ sub process_csv_file_with_header
 
                     $chan_config->{+CHAN_TX_PERMIT} = tx_permit($chan_config);
 
-                    add_channel($out_fh, $chan_config, $zone_name, $scanlist_name, $zone_order_index);
+                    add_channel($chan_config, $zone_name, $scanlist_name, $zone_order_index);
                 }
             }
             $zone_order_index++;
@@ -869,7 +918,7 @@ sub process_csv_file_with_header
 
 sub add_channel
 {
-    my ($out_fh, $chan_config, $zone_name, $scanlist_name, $zone_order_index) = @_;
+    my ($chan_config, $zone_name, $scanlist_name, $zone_order_index) = @_;
 
     my @output;
 
@@ -893,9 +942,9 @@ sub add_channel
         }
 
         push @output, $value; 
-    } 
+    }
 
-    $csv_out->print($out_fh, \@output);
+    push @channel_rows, \@output;
 
     build_zone_config(     $chan_config, $zone_name, $zone_order_index);
     build_scanlist_config( $chan_config, $scanlist_name);
@@ -1239,7 +1288,7 @@ sub write_optional_settings_stub
 
     my @headers = ("StartChUse", "StartZone1", "StartZone2", "StartCurChan1", "StartCurChan2");
 
-    open(my $fh, ">$filename") or error("Couldn't open file '$filename': $!\n");
+    my $fh = open_output_sink($filename);
 
     $csv_out->print($fh, \@headers);
 
@@ -1296,7 +1345,7 @@ sub write_optional_settings_full
     $new_values[$col_index{"StartCurChan1"}] = find_channel_position($global_start_zone1, $global_start_channel1);
     $new_values[$col_index{"StartCurChan2"}] = find_channel_position($global_start_zone2, $global_start_channel2);
 
-    open(my $fh, ">$filename") or error("Couldn't open file '$filename': $!\n");
+    my $fh = open_output_sink($filename);
     $csv_out->print($fh, $headers_ref);
     $csv_out->print($fh, \@new_values);
     close($fh) or error("Couldn't close file '$filename': $!\n");
