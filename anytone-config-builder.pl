@@ -5,9 +5,8 @@ use strict;
 use Text::CSV;
 use Scalar::Util qw(looks_like_number);
 use Getopt::Long;
-use File::Temp qw(tempdir);
+use File::Temp;
 use JSON::PP;
-use Cwd qw(abs_path);
 
 
 use constant {
@@ -61,8 +60,9 @@ my $global_zone_channel_sort = "processed";    # processed, alpha, id, freq-asc,
 my $global_scanlist_channel_sort = "processed"; # processed, alpha, id, freq-asc, freq-desc
 my $global_json_mode = 0;
 my $global_config_directory = "config";
-my %json_inputs;
 my %json_outputs;
+my @json_warnings;
+my @json_info;
 
 # Startup options
 my $global_start_zone1 = "";
@@ -119,29 +119,35 @@ sub main
     compute_zone_ids();
     validate_startup_options();
 
+    # Decide optional-settings intent before any writes. If a template was
+    # provided and startup options are complete, validate it now so a bad
+    # template cannot leave a partial output directory behind.
+    my $num_start_opts = count_startup_options();
+    my $use_template = ($num_start_opts == 4 && length($global_optional_settings_filename) > 0);
+
+    if ($use_template) {
+        validate_optional_settings_template($global_optional_settings_filename);
+    }
+
     write_channels_file("$output_directory/channels.csv");
     write_zone_file("$output_directory/zones.csv");
     write_scanlist_file("$output_directory/scanlists.csv");
     write_talkgroup_file("$output_directory/talkgroups.csv");
 
     # Handle Optional Settings
-    my $num_start_opts = count_startup_options();
-
     if ($num_start_opts == 4) {
         # Always write the stub
         write_optional_settings_stub("$output_directory/OptionalSettings_STUB.csv");
         print "INFO: Optional Settings stub generated.\n";
 
-        # If a template was provided, also write the full override
-        if (length($global_optional_settings_filename) > 0) {
+        # If a template was provided, write the full override (already validated)
+        if ($use_template) {
             my ($headers_ref, $values_ref) = read_optional_settings_template($global_optional_settings_filename);
             write_optional_settings_full("$output_directory/OptionalSettings_Full.csv", $headers_ref, $values_ref);
             print "INFO: Optional Settings full override generated from template.\n";
         }
-    } else {
-        if (length($global_optional_settings_filename) > 0) {
-            warning("Optional Settings template provided but startup options are missing (all four --start-* options required). Skipping.");
-        }
+    } elsif (length($global_optional_settings_filename) > 0) {
+        warning("Optional Settings template provided but startup options are missing (all four --start-* options required). Skipping.");
     }
 }
 
@@ -652,90 +658,76 @@ sub read_channel_csv_default
 sub json_response
 {
     my ($payload) = @_;
+    $payload->{warnings} = \@json_warnings if (!exists $payload->{warnings});
+    $payload->{info} = \@json_info if (!exists $payload->{info});
     my $json = JSON::PP->new->canonical->encode($payload);
     print STDOUT $json;
     exit 0;
 }
 
-sub analyze_csv_inputs
+sub reset_pipeline_state
 {
-    my ($input_map) = @_;
-    my %zones;
-    my $csv_parser = Text::CSV_XS->new({binary => 1, auto_diag => 1});
-
-    for my $input_name (qw(analog digital_others digital_repeaters))
-    {
-        my $source = $input_map->{$input_name};
-        next if (!defined $source || $source eq '');
-
-        my $temp_file = File::Temp::tempnam('/tmp', 'acb-json-');
-        open(my $tmp_fh, '>:raw', $temp_file) or next;
-        print {$tmp_fh} $source;
-        close($tmp_fh);
-
-        open(my $fh, '<:crlf', $temp_file) or next;
-        my $first = 1;
-        while (my $row = $csv_parser->getline($fh))
-        {
-            next if $first;
-            $first = 0;
-            my $zone_name = $row->[0] // '';
-            my $channel_name = $row->[1] // '';
-            next if ($zone_name eq '' || $channel_name eq '');
-            push @{ $zones{$zone_name} }, $channel_name;
-        }
-        close($fh);
-        unlink $temp_file;
-    }
-
-    my @zone_list;
-    for my $name (sort { lc($a) cmp lc($b) } keys %zones)
-    {
-        my @channels = sort { lc($a) cmp lc($b) } @{ $zones{$name} };
-        push @zone_list, { name => $name, channels => \@channels };
-    }
-
-    return \@zone_list;
+    %zone_config = ();
+    %zone_order = ();
+    %scanlist_config = ();
+    %talkgroup_config = ();
+    %zone_id_by_name = ();
+    %talkgroup_mapping = ();
+    %talkgroup_order = ();
+    @channel_rows = ();
+    %json_outputs = ();
+    %channel_csv_field_name = ();
+    %channel_csv_default_value = ();
+    $global_channel_number = 1;
+    $analog_channel_index = 0;
+    $global_line_number = 0;
+    $global_file_name = 'none';
+    $global_start_zone1 = "";
+    $global_start_zone2 = "";
+    $global_start_channel1 = "";
+    $global_start_channel2 = "";
+    $global_optional_settings_filename = "";
+    $global_sort_mode = "alpha";
+    $global_hotspot_tx_permit = "same-color-code";
+    $global_nickname_mode = "off";
+    $global_multi_zone = 0;
+    $global_zone_channel_sort = "processed";
+    $global_scanlist_channel_sort = "processed";
+    $zone_order_default = 9999;
+    @json_warnings = ();
+    @json_info = ();
 }
 
-sub run_json_mode
+sub setup_json_pipeline
 {
-    my $raw = do { local $/; <STDIN> };
-    my $request = eval { JSON::PP->new->decode($raw) };
-    if (!defined $request || ref($request) ne 'HASH')
-    {
-        json_response({ status => 'error', message => 'Invalid JSON request' });
-    }
+    my ($inputs, $options, $startup) = @_;
 
-    my $safe_mode = $request->{mode} // 'build';
-    $safe_mode =~ s/[^A-Za-z0-9_-]/_/g;
+    reset_pipeline_state();
+    $global_json_mode = 1;
 
-    my $inputs = $request->{inputs} // {};
-    my $options = $request->{options} // {};
-    my $startup = $request->{startup} // {};
-    $global_sort_mode = $options->{sorting} // $global_sort_mode;
+    $global_sort_mode = apply_sort_mode($options->{sorting} // $global_sort_mode);
     $global_hotspot_tx_permit = $options->{hotspot_tx_permit} // $global_hotspot_tx_permit;
+    validate_hotspot_mode($global_hotspot_tx_permit);
     $global_nickname_mode = $options->{nicknames} // $global_nickname_mode;
-    $global_multi_zone = $options->{multi_zone} ? 1 : $global_multi_zone;
+    validate_nickname_mode($global_nickname_mode);
+    $global_multi_zone = $options->{multi_zone} // $global_multi_zone;
     $global_zone_channel_sort = $options->{zone_channel_sort} // $global_zone_channel_sort;
+    validate_channel_sort_mode($global_zone_channel_sort);
     $global_scanlist_channel_sort = $options->{scanlist_channel_sort} // $global_scanlist_channel_sort;
+    validate_channel_sort_mode($global_scanlist_channel_sort);
 
     $global_start_zone1 = $startup->{zone1} // $startup->{start_zone1} // $global_start_zone1;
     $global_start_zone2 = $startup->{zone2} // $startup->{start_zone2} // $global_start_zone2;
     $global_start_channel1 = $startup->{channel1} // $startup->{start_channel1} // $global_start_channel1;
     $global_start_channel2 = $startup->{channel2} // $startup->{start_channel2} // $global_start_channel2;
 
-    if (($request->{mode} // 'build') eq 'analyze')
-    {
-        my $zones = analyze_csv_inputs($inputs);
-        json_response({ status => 'ok', zones => $zones, warnings => [], info => [] });
-    }
-
     my @required = qw(analog digital_others digital_repeaters talkgroups);
     for my $name (@required)
     {
-        next if (defined $inputs->{$name} && $inputs->{$name} ne '');
-        json_response({ status => 'error', message => "Missing required input: $name" });
+        if (!defined $inputs->{$name} || $inputs->{$name} eq '')
+        {
+            json_response({ status => 'error', message => "Missing required input: $name" });
+        }
     }
 
     $csv     = Text::CSV_XS->new({binary => 1, auto_diag => 1, always_quote => 1, eol => "\n"});
@@ -753,32 +745,92 @@ sub run_json_mode
         }
     }
 
+    if (defined $inputs->{optional_settings} && $inputs->{optional_settings} ne '')
+    {
+        my $path = "$workdir/optional_settings.csv";
+        open(my $fh, '>:raw', $path) or json_response({ status => 'error', message => "Couldn't write optional_settings.csv" });
+        print {$fh} $inputs->{optional_settings};
+        close($fh);
+        $global_optional_settings_filename = $path;
+    }
+
     read_talkgroups("$workdir/talkgroups.csv");
     read_channel_csv_default("$global_config_directory/channel-defaults.csv");
-
-    $global_json_mode = 1;
-    %json_outputs = ();
-    @channel_rows = ();
 
     process_dmr_others_file("$workdir/digital_others.csv");
     process_dmr_repeater_file("$workdir/digital_repeaters.csv");
     process_analog_file("$workdir/analog.csv");
 
     compute_zone_ids();
-    validate_startup_options();
+    if (count_startup_options() > 0) {
+        validate_startup_options();
+    }
+
+    return $workdir;
+}
+
+sub run_json_mode
+{
+    my $raw = do { local $/; <STDIN> };
+    my $request = eval { JSON::PP->new->decode($raw) };
+    if (!defined $request || ref($request) ne 'HASH')
+    {
+        json_response({ status => 'error', message => 'Invalid JSON request' });
+    }
+
+    my $inputs = $request->{inputs} // {};
+    my $options = $request->{options} // {};
+    my $startup = $request->{startup} // {};
+    my $mode = $request->{mode} // 'build';
+
+    if ($mode ne 'analyze' && $mode ne 'build') {
+        json_response({ status => 'error', message => "Unknown mode: $mode" });
+    }
+
+    if ($mode eq 'analyze')
+    {
+        setup_json_pipeline($inputs, $options, $startup);
+        my @zones;
+        foreach my $key (sort zone_sort keys %zone_config)
+        {
+            my @channels;
+            foreach my $entry (@{ $zone_config{$key} || [] })
+            {
+                my ($order, $chan_name, $rx_freq, $tx_freq) = split("\t", $entry);
+                push @channels, $chan_name;
+            }
+            push @zones, { name => $key, channels => \@channels };
+        }
+        json_response({ status => 'ok', zones => \@zones, warnings => \@json_warnings, info => \@json_info });
+    }
+
+    setup_json_pipeline($inputs, $options, $startup);
+
+    # Decide optional-settings intent before any buffered writes. A bad
+    # template must surface as an error before partial output accumulates,
+    # same discipline as the CLI path.
+    my $num_start_opts = count_startup_options();
+    my $use_template = ($num_start_opts == 4 && length($global_optional_settings_filename) > 0);
+
+    if ($use_template) {
+        validate_optional_settings_template($global_optional_settings_filename);
+    }
 
     write_channels_file("channels.csv");
     write_zone_file("zones.csv");
     write_scanlist_file("scanlists.csv");
     write_talkgroup_file("talkgroups.csv");
 
-    my $num_start_opts = count_startup_options();
     if ($num_start_opts == 4) {
         write_optional_settings_stub("OptionalSettings_STUB.csv");
-        if (length($global_optional_settings_filename) > 0) {
+        push @json_info, 'Optional Settings stub generated.';
+        if ($use_template) {
             my ($headers_ref, $values_ref) = read_optional_settings_template($global_optional_settings_filename);
             write_optional_settings_full("OptionalSettings_Full.csv", $headers_ref, $values_ref);
+            push @json_info, 'Optional Settings full override generated from template.';
         }
+    } elsif (length($global_optional_settings_filename) > 0) {
+        warning("Optional Settings template provided but startup options are missing. Skipping.");
     }
 
     my %files;
@@ -793,7 +845,7 @@ sub run_json_mode
         }
     }
 
-    json_response({ status => 'ok', files => \%files, warnings => [], info => [] });
+    json_response({ status => 'ok', files => \%files, warnings => \@json_warnings, info => \@json_info });
 }
 
 
@@ -1257,8 +1309,29 @@ sub find_channel_position
 
 sub validate_startup_options
 {
-    # If no startup options are set, skip validation
-    return 1 if (!defined($global_start_zone1) || length($global_start_zone1) == 0);
+    my $num_start_opts = count_startup_options();
+
+    # If no startup options are set, skip validation.
+    return 1 if ($num_start_opts == 0);
+
+    # If startup options are partially defined, fail early and clearly.
+    if ($num_start_opts > 0 && $num_start_opts < 4) {
+        error("If any --start-* option is specified, all four must be provided:\n"
+            . "  --start-zone1, --start-zone2, --start-channel1, --start-channel2\n");
+    }
+
+    if (!defined($global_start_zone1) || length($global_start_zone1) == 0) {
+        error("Startup zone 1 is not defined.\n");
+    }
+    if (!defined($global_start_zone2) || length($global_start_zone2) == 0) {
+        error("Startup zone 2 is not defined.\n");
+    }
+    if (!defined($global_start_channel1) || length($global_start_channel1) == 0) {
+        error("Startup channel 1 is not defined.\n");
+    }
+    if (!defined($global_start_channel2) || length($global_start_channel2) == 0) {
+        error("Startup channel 2 is not defined.\n");
+    }
 
     # Check if zones exist
     if (!exists $zone_id_by_name{$global_start_zone1}) {
@@ -1277,6 +1350,33 @@ sub validate_startup_options
     my $chan2_pos = find_channel_position($global_start_zone2, $global_start_channel2);
     if (!$chan2_pos) {
         error("Startup channel 2 '$global_start_channel2' is not in startup zone 2 '$global_start_zone2'.\n");
+    }
+
+    return 1;
+}
+
+sub validate_optional_settings_template
+{
+    my ($filename) = @_;
+
+    my ($headers_ref, $values_ref) = read_optional_settings_template($filename);
+
+    my %col_index;
+    for (my $i = 0; $i < scalar(@{$headers_ref}); $i++) {
+        $col_index{$headers_ref->[$i]} = $i;
+    }
+
+    my @required_cols = ("StartChUse", "StartZone1", "StartZone2", "StartCurChan1", "StartCurChan2");
+    my @missing_cols;
+    foreach my $col (@required_cols) {
+        if (!exists $col_index{$col}) {
+            push @missing_cols, $col;
+        }
+    }
+
+    if (@missing_cols) {
+        error("Required column(s) not found in Optional Settings template: " . join(", ", @missing_cols) . "\n"
+            . "Please ensure your template matches the expected CPS export format.\n");
     }
 
     return 1;
@@ -1478,6 +1578,17 @@ sub validate_zone
     }
 }
 
+sub apply_sort_mode
+{
+    my ($sort_order) = @_;
+
+    validate_sort_mode($sort_order);
+    $zone_order_default = ($sort_order eq "analog-first") ? 0 : 9999;
+    $global_sort_mode = $sort_order;
+
+    return $sort_order;
+}
+
 sub validate_sort_mode
 {
     my ($sort_order) = @_;
@@ -1635,11 +1746,7 @@ sub handle_command_line_args
     }
     $config_directory = $global_config_directory;
 
-    validate_sort_mode($global_sort_mode);
-    if ($global_sort_mode eq "analog-first")
-    {
-        $zone_order_default = 0;
-    }
+    apply_sort_mode($global_sort_mode);
 
     validate_hotspot_mode($global_hotspot_tx_permit);
     validate_nickname_mode($global_nickname_mode);
@@ -1682,6 +1789,7 @@ sub usage
     print "  [--multi-zone]             enable multiple zones/scanlists via '|' separator\n";
     print "  [--zone-channel-sort=(processed|alpha|id|freq-asc|freq-desc)]\n";
     print "  [--scanlist-channel-sort=(processed|alpha|id|freq-asc|freq-desc)]\n";
+    print "  [--json-mode]              emit JSON responses suitable for the web UI\n";
     print "  [--start-zone1=<zone>]     Zone for Receiver A\n";
     print "  [--start-zone2=<zone>]     Zone for Receiver B\n";
     print "  [--start-channel1=<chan>]  Channel for Receiver A\n";
@@ -1695,6 +1803,13 @@ sub usage
 sub error
 {
     my ($error) = @_;
+    my $message = $error;
+    $message =~ s/\r?\n\z//;
+
+    if ($global_json_mode) {
+        json_response({ status => 'error', message => $message });
+        return; # json_response exits; this is defense in depth for future readers
+    }
 
     print "ERROR: $error";
     exit -1;
@@ -1703,6 +1818,11 @@ sub error
 sub warning
 {
     my ($message) = @_;
+
+    if ($global_json_mode) {
+        push @json_warnings, $message;
+        return;
+    }
 
     print "WARNING: $message\n";
 }
