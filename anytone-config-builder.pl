@@ -1808,6 +1808,7 @@ sub error
 
     if ($global_json_mode) {
         json_response({ status => 'error', message => $message });
+        return; # json_response exits; this is defense in depth for future readers
     }
 
     print "ERROR: $error";
