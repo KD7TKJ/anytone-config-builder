@@ -5,6 +5,9 @@ use strict;
 use Text::CSV;
 use Scalar::Util qw(looks_like_number);
 use Getopt::Long;
+use File::Temp qw(tempdir);
+use JSON::PP;
+use Cwd qw(abs_path);
 
 
 use constant {
@@ -56,6 +59,10 @@ my $global_nickname_mode = "off";
 my $global_multi_zone = 0; # default: off
 my $global_zone_channel_sort = "processed";    # processed, alpha, id, freq-asc, freq-desc
 my $global_scanlist_channel_sort = "processed"; # processed, alpha, id, freq-asc, freq-desc
+my $global_json_mode = 0;
+my $global_config_directory = "config";
+my %json_inputs;
+my %json_outputs;
 
 # Startup options
 my $global_start_zone1 = "";
@@ -89,6 +96,12 @@ exit 0;
 
 sub main
 {
+    if ($global_json_mode)
+    {
+        run_json_mode();
+        return;
+    }
+
     my ($analog_filename, $digital_others_filename, $digital_repeaters_filename, $talkgroups_filename,
         $config_directory, $output_directory) = handle_command_line_args();
 
@@ -557,11 +570,29 @@ sub dmr_repeater_csv_matrix_extractor
 ## These two routines are basically the same... let's extract the common parts and make this generic
 #####
 #####
+sub read_config_file
+{
+    my ($path) = @_;
+    open(my $fh, '<:crlf', $path)
+        or error("Couldn't open config file '$path': $!\n");
+    return $fh;
+}
+
+sub safe_output_key
+{
+    my ($filename) = @_;
+    my $key = $filename;
+    $key =~ s{.*[/\\]}{};
+    $key =~ s/[^A-Za-z0-9._-]/_/g;
+    $key =~ s/^\.+//;
+    return $key;
+}
+
 sub read_channel_csv_default
 {
     my ($filename) = @_;
 
-    open(my $fh, '<:crlf', $filename) or error("Couldn't open file '$filename': $!\n");
+    my $fh = read_config_file($filename);
 
     for(my $line_no = 0; my $row = $csv->getline($fh); $line_no++)
     {
@@ -570,6 +601,150 @@ sub read_channel_csv_default
     }
    
     close($fh); 
+}
+
+sub json_response
+{
+    my ($payload) = @_;
+    my $json = JSON::PP->new->canonical->encode($payload);
+    print STDOUT $json;
+    exit 0;
+}
+
+sub analyze_csv_inputs
+{
+    my ($input_map) = @_;
+    my %zones;
+    my $csv_parser = Text::CSV_XS->new({binary => 1, auto_diag => 1});
+
+    for my $input_name (qw(analog digital_others digital_repeaters))
+    {
+        my $source = $input_map->{$input_name};
+        next if (!defined $source || $source eq '');
+
+        my $temp_file = File::Temp::tempnam('/tmp', 'acb-json-');
+        open(my $tmp_fh, '>:raw', $temp_file) or next;
+        print {$tmp_fh} $source;
+        close($tmp_fh);
+
+        open(my $fh, '<:crlf', $temp_file) or next;
+        my $first = 1;
+        while (my $row = $csv_parser->getline($fh))
+        {
+            next if $first;
+            $first = 0;
+            my $zone_name = $row->[0] // '';
+            my $channel_name = $row->[1] // '';
+            next if ($zone_name eq '' || $channel_name eq '');
+            push @{ $zones{$zone_name} }, $channel_name;
+        }
+        close($fh);
+        unlink $temp_file;
+    }
+
+    my @zone_list;
+    for my $name (sort { lc($a) cmp lc($b) } keys %zones)
+    {
+        my @channels = sort { lc($a) cmp lc($b) } @{ $zones{$name} };
+        push @zone_list, { name => $name, channels => \@channels };
+    }
+
+    return \@zone_list;
+}
+
+sub run_json_mode
+{
+    my $raw = do { local $/; <STDIN> };
+    my $request = eval { JSON::PP->new->decode($raw) };
+    if (!defined $request || ref($request) ne 'HASH')
+    {
+        json_response({ status => 'error', message => 'Invalid JSON request' });
+    }
+
+    my $safe_mode = $request->{mode} // 'build';
+    $safe_mode =~ s/[^A-Za-z0-9_-]/_/g;
+
+    my $inputs = $request->{inputs} // {};
+    my $options = $request->{options} // {};
+    my $startup = $request->{startup} // {};
+    $global_sort_mode = $options->{sorting} // $global_sort_mode;
+    $global_hotspot_tx_permit = $options->{hotspot_tx_permit} // $global_hotspot_tx_permit;
+    $global_nickname_mode = $options->{nicknames} // $global_nickname_mode;
+    $global_multi_zone = $options->{multi_zone} ? 1 : $global_multi_zone;
+    $global_zone_channel_sort = $options->{zone_channel_sort} // $global_zone_channel_sort;
+    $global_scanlist_channel_sort = $options->{scanlist_channel_sort} // $global_scanlist_channel_sort;
+
+    $global_start_zone1 = $startup->{zone1} // $startup->{start_zone1} // $global_start_zone1;
+    $global_start_zone2 = $startup->{zone2} // $startup->{start_zone2} // $global_start_zone2;
+    $global_start_channel1 = $startup->{channel1} // $startup->{start_channel1} // $global_start_channel1;
+    $global_start_channel2 = $startup->{channel2} // $startup->{start_channel2} // $global_start_channel2;
+
+    if (($request->{mode} // 'build') eq 'analyze')
+    {
+        my $zones = analyze_csv_inputs($inputs);
+        json_response({ status => 'ok', zones => $zones, warnings => [], info => [] });
+    }
+
+    my @required = qw(analog digital_others digital_repeaters talkgroups);
+    for my $name (@required)
+    {
+        next if (defined $inputs->{$name} && $inputs->{$name} ne '');
+        json_response({ status => 'error', message => "Missing required input: $name" });
+    }
+
+    my $workdir = File::Temp::tempdir('acb-json-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+    for my $name (@required)
+    {
+        my $path = "$workdir/$name.csv";
+        if (defined $inputs->{$name} && $inputs->{$name} ne '')
+        {
+            open(my $fh, '>:raw', $path) or json_response({ status => 'error', message => "Couldn't write $name.csv" });
+            print {$fh} $inputs->{$name};
+            close($fh);
+        }
+    }
+
+    read_talkgroups("$workdir/talkgroups.csv");
+    read_channel_csv_default("$global_config_directory/channel-defaults.csv");
+
+    my $channels_path = "$workdir/channels.csv";
+    open(my $channels_fh, '>', $channels_path) or json_response({ status => 'error', message => "Couldn't open channels.csv" });
+    print_channel_header($channels_fh);
+    process_dmr_others_file($channels_fh, "$workdir/digital_others.csv");
+    process_dmr_repeater_file($channels_fh, "$workdir/digital_repeaters.csv");
+    process_analog_file($channels_fh, "$workdir/analog.csv");
+    close($channels_fh);
+
+    write_zone_file("$workdir/zones.csv");
+    write_scanlist_file("$workdir/scanlists.csv");
+    write_talkgroup_file("$workdir/talkgroups_out.csv");
+
+    validate_startup_options();
+    my $num_start_opts = count_startup_options();
+    if ($num_start_opts == 4) {
+        write_optional_settings_stub("$workdir/OptionalSettings_STUB.csv");
+        if (length($global_optional_settings_filename) > 0) {
+            my ($headers_ref, $values_ref) = read_optional_settings_template($global_optional_settings_filename);
+            write_optional_settings_full("$workdir/OptionalSettings_Full.csv", $headers_ref, $values_ref);
+        }
+    }
+
+    my %files;
+    for my $filename (qw(channels.csv zones.csv scanlists.csv talkgroups_out.csv OptionalSettings_STUB.csv OptionalSettings_Full.csv))
+    {
+        my $path = "$workdir/$filename";
+        next if (!-f $path);
+        my $safe_name = safe_output_key($filename);
+        if ($safe_name eq '') {
+            json_response({ status => 'error', message => "Refusing to emit file with unsafe name '$filename'" });
+        }
+        local $/ = undef;
+        open(my $fh, '<:raw', $path) or next;
+        $files{$safe_name} = <$fh>;
+        close($fh);
+    }
+
+    json_response({ status => 'ok', files => \%files, warnings => [], info => [] });
 }
 
 
@@ -1389,7 +1564,7 @@ sub handle_command_line_args
                "digital-others-csv=s"     => \$digital_others_filename,
                "digital-repeaters-csv=s"  => \$digital_repeaters_filename,
                "talkgroups-csv=s"         => \$talkgroups_filename,
-               "config:s"                 => \$config_directory,
+               "config:s"                 => \$global_config_directory,
                "output-directory=s"       => \$output_directory,
                "sorting:s"                => \$global_sort_mode,
                "nicknames:s"              => \$global_nickname_mode,
@@ -1401,8 +1576,15 @@ sub handle_command_line_args
                "start-zone2=s"            => \$global_start_zone2,
                "start-channel1=s"         => \$global_start_channel1,
                "start-channel2=s"         => \$global_start_channel2,
-               "optional-settings-csv=s"  => \$global_optional_settings_filename)
+               "optional-settings-csv=s"  => \$global_optional_settings_filename,
+               "json-mode!"               => \$global_json_mode)
         or usage();
+
+    if (!defined($global_config_directory) || $global_config_directory eq '')
+    {
+        $global_config_directory = "config";
+    }
+    $config_directory = $global_config_directory;
 
     validate_sort_mode($global_sort_mode);
     if ($global_sort_mode eq "analog-first")
@@ -1424,15 +1606,10 @@ sub handle_command_line_args
             . "  --start-zone1, --start-zone2, --start-channel1, --start-channel2\n");
     }
 
-    if (!defined($analog_filename) || !defined($digital_others_filename) || !defined($digital_repeaters_filename)
-        || !defined($talkgroups_filename) || !defined($output_directory))
+    if (!$global_json_mode && (!defined($analog_filename) || !defined($digital_others_filename) || !defined($digital_repeaters_filename)
+        || !defined($talkgroups_filename) || !defined($output_directory)))
     {
         usage();
-    }
-
-    if (!defined($config_directory))
-    {
-        $config_directory = "config";
     }
 
     return ($analog_filename, $digital_others_filename, $digital_repeaters_filename, $talkgroups_filename,
