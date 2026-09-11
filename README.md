@@ -92,4 +92,65 @@ This spits out a file with a Radio Id of "DMR ID".  Before you import these file
 You're on your own for contacts.  I pulled mine in by starting with the PNWDigital code plug (which has the contacts), then importing the files created by this tool
 
 
+# Web UI and command-line usage
+
+This project now supports two ways to generate your CSV outputs:
+
+- the original command-line tool, built around `anytone-config-builder.pl`
+- a browser-based workflow in the `website/` directory for file upload and guided generation
+
+## Web interface
+
+The browser workflow is served from the files in `website/`:
+
+- `website/index.html` – main landing page and upload form
+- `website/config-builder.php` – PHP wrapper that invokes the script safely
+- `website/json_endpoint.php` – AJAX/JSON endpoint used by the JavaScript frontend
+- `website/config-builder.js` – client-side validation and guided setup flow
+
+The web form supports the same advanced features as the script, including:
+
+- multi-zone and multi-scanlist generation via `|` separators
+- channel sorting options across zones and scanlists
+- hotspot TX permit settings
+- repeater nickname handling
+- startup zone/channel settings and optional settings CSV templates
+
+## Command-line usage
+
+Run the script directly from the project root:
+
+```bash
+perl anytone-config-builder.pl \
+  --analog input-csv/Analog.csv \
+  --digital-others input-csv/Digital-Others.csv \
+  --digital-repeaters input-csv/Digital-Repeaters.csv \
+  --talkgroups input-csv/TalkGroups.csv
+```
+
+Additional options include:
+
+```bash
+  [--multi-zone]
+  [--hotspot-tx-permit=(always|same-color-code)]
+  [--nicknames=(off|prefix|suffix|prefix-forced|suffix-forced)]
+  [--zone-channel-sort=(processed|alpha|id|freq-asc|freq-desc)]
+  [--scanlist-channel-sort=(processed|alpha|id|freq-asc|freq-desc)]
+  [--start-zone1=<Zone>] [--start-channel1=<Channel>]
+  [--start-zone2=<Zone>] [--start-channel2=<Channel>]
+  [--optional-settings-csv=<optional.csv>]
+  [--json-mode]
+```
+
+The startup zone/channel pair and optional settings CSV are especially useful for setting the radio's default startup state in the CPS.
+
+## Notes on the advanced options
+
+The advanced options are documented in more detail in `documentation/advanced-options.md` and are also surfaced in the browser UI. In particular, the current project supports:
+
+- multi-zone channel placement using `North|South`-style values
+- optional power-on startup configuration for Receiver A and Receiver B
+- optional settings templates that override generated startup values
+- flexible channel ordering for both zones and scanlists
+
 # Usage
